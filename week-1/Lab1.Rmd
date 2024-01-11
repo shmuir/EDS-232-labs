@@ -422,6 +422,6 @@ Hmm. The model does not do good job of generalizing the relationship between a p
 
 *Question 8:* What issues do you see with fitting a linear regression to this data?
 
-- There are other variables that have a stronger correlation with price than package type, such as variety. The relationship may also not be best represented by a linear model. Package type is also a catagorical variable, so we do not get much spread in the data. 
+- There are other variables that have a stronger correlation with price than package type, such as variety. The relationship may also not be best represented by a linear model. Package type is also a categorical variable, so we do not get much spread in the data. 
 
 Congratulations, you just created a model that can help predict the price of a few varieties of pumpkins. But you can probably create a better model! To be continued next week...
