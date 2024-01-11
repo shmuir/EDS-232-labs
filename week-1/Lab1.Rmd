@@ -35,7 +35,6 @@ glimpse(dat)
 ```
 
 ```{r}
-
 # Clean names to the snake_case convention
 
 pumpkins <- dat %>% clean_names(case = "snake")
@@ -56,7 +55,6 @@ pumpkins %>% slice_head(n = 5)
 ```
 
 ```{r}
-
 ## Load lubridate
 
 library(lubridate)
@@ -88,9 +86,11 @@ Let's take a look at pumpkins sales throughout the year.
 *Question 1:* Create a scatter plot using price on the y-axis and day on the x-axis.
 
 ```{r}
-
-# Make a scatter plot of month and price
-
+# Make a scatter plot of day and price
+ggplot(pumpkins, aes(x = day, y = price)) +
+  geom_point(color = "orange") +
+  theme_minimal() +
+  labs(title = "Pumpkin prices and day of year", x = "Day", y = "Price ($)")
 ```
 
 Now, before we go any further, let's take another look at the data. Notice anything odd?
@@ -119,8 +119,8 @@ pumpkins %>% distinct(package)
 
 ```{r}
 # Retain only pumpkins with "bushel" in the package column
-
-
+new_pumpkins <- pumpkins %>%
+  filter(str_detect(package, "bushel"))
 ```
 
 ```{r}
@@ -156,7 +156,6 @@ new_pumpkins %>%
 ## Data Visualization
 
 ```{r}
-
 # Set theme
 theme_set(theme_light())
 
@@ -170,13 +169,20 @@ new_pumpkins %>%
 
 How do we make it more useful? To get charts to display useful data, you usually need to group the data somehow.
 
+- It would be more useful to color by month. There is not a clear relationship between price and day, but it is surprising that the data seems to be separating into two groups with prices <20 and prices >30.
+
 *Question 4:* Group the pumpkins into groups based on the month column and then find the mean price for each month. Plot the results with a bar plot.
 
 Hint: use dplyr::group_by() %\>% summarize()
 
 ```{r}
 # Find the average price of pumpkins per month
-
+new_pumpkins %>%
+  group_by(month) %>%
+  summarise(mean_price = mean(price, na.rm = TRUE)) %>%
+  ggplot(., aes(x = month, y = mean_price)) +
+  geom_col(fill = "darkorange", alpha = 0.7) +
+  labs(y = "Pumpkin Price ($)", x = "Month")
 ```
 
 ```{r}
@@ -184,12 +190,12 @@ Hint: use dplyr::group_by() %\>% summarize()
 pumpkins %>%
   group_by(month) %>% 
   summarise(mean_price = mean(price)) %>% 
-  ggplot(aes(x = month, y = mean_price)) +
+  ggplot(aes(x = as_factor(month), y = mean_price)) +
   geom_col(fill = "midnightblue", alpha = 0.7) +
-  ylab("Pumpkin Price")
+  ylab("Pumpkin Price ($)")
 ```
 
-#Preprocessing data for modelling using recipes
+# Preprocessing data for modelling using recipes
 
 What if we wanted to predict the price of a pumpkin based on the city or package columns which are of type character? How could we find the correlation between, say, package and price?
 
@@ -245,6 +251,8 @@ The processed data baked_pumpkins has all its predictors encoded confirming that
 
 *Question 5:* From looking at the baked_pumpkins tibble, how many total cities are represented in the data set?
 
+- There are 10 total cities represented in the data set.
+
 baked_pumpkins is a data frame that we can perform computations on. For instance, let's try to find a good correlation between two variables to potentially build a good predictive model. We'll use the function cor() to do this.
 
 ```{r}
@@ -255,11 +263,15 @@ cor(baked_pumpkins$package, baked_pumpkins$price)
 *Question 6:* Calculate the correlation between pumpkin price and two other variables in the data set
 
 ```{r}
-#Correlation between price and other vars.
-
+#Correlation between price and month
+cor(baked_pumpkins$month, baked_pumpkins$price)
+# correlation between price and variety
+cor(baked_pumpkins$variety, baked_pumpkins$price)
 ```
 
 *Question 7:* Which of these three variables is most highly correlated with price? Why might this be?
+
+- Variety has a high correlation with price which makes sense. Even though the time of year or city may change, there is generally a base price for certain varieties. 
 
 Now let's visualize a correlation matrix of all the columns using the corrplot package.
 
@@ -409,5 +421,7 @@ plot_results %>%
 Hmm. The model does not do good job of generalizing the relationship between a package and its corresponding price.
 
 *Question 8:* What issues do you see with fitting a linear regression to this data?
+
+- There are other variables that have a stronger correlation with price than package type, such as variety. The relationship may also not be best represented by a linear model. Package type is also a catagorical variable, so we do not get much spread in the data. 
 
 Congratulations, you just created a model that can help predict the price of a few varieties of pumpkins. But you can probably create a better model! To be continued next week...
