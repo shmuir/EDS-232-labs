@@ -302,7 +302,7 @@ To do this, we'll first split the data. Data splitting is a key part of the mach
 ```{r}
 set.seed(123)
 # Split the data into training and test sets
-pumpkins_split <- new_pumpkins %>% 
+pumpkins_split <- baked_pumpkins %>% 
   initial_split(prop = 0.8)
 
 
@@ -422,6 +422,6 @@ Hmm. The model does not do good job of generalizing the relationship between a p
 
 *Question 8:* What issues do you see with fitting a linear regression to this data?
 
-- There are other variables that have a stronger correlation with price than package type, such as variety. The relationship may also not be best represented by a linear model. Package type is also a categorical variable, so we do not get much spread in the data. 
+- There are other variables that have a stronger correlation with price than package type, such as variety. The relationship may also not be best represented by a linear model. A different type of regression might fit the data better, since right now the model is under-fitting the data.  
 
 Congratulations, you just created a model that can help predict the price of a few varieties of pumpkins. But you can probably create a better model! To be continued next week...
