@@ -126,25 +126,23 @@ Additional assignment components :
 
 ### Answers
 
-6. New predictor variable will be city name
-  
-```{r}
-# 7. 
-cor(baked_pumpkins$city_name, baked_pumpkins$price)
+6. New predictor variable will be city name.
 
-corrplot(corr_mat, method = "shade", shade.col = NA, tl.col = "black", tl.srt = 45, addCoef.col = "black", cl.pos = "n", order = "original")
+7. 
+```{r}
+cor(baked_pumpkins$city_name, baked_pumpkins$price)
 ```
 
-  
-```{r}
-# 8. 
+The correlation between city name and price is `r cor(baked_pumpkins$city_name, baked_pumpkins$price)`.
 
+8. 
+```{r}
 # Specify a recipe
 poly_pumpkins_recipe_city <- recipe(price ~ city_name, data = pumpkins_train) %>%
   step_integer(all_predictors(), zero_based = TRUE) %>% 
   step_poly(all_predictors(), degree = 4)
 
-# Create a model specification called poly_spec
+# Create a model specification
 poly_spec <- linear_reg() %>% 
   set_engine("lm") %>% 
   set_mode("regression")
