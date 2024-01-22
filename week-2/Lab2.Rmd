@@ -9,6 +9,77 @@ Today we will be continuing the pumpkin case study from last week. We will be us
 
 Once you have done that, we'll start today's lab by specifying a recipe for a polynomial model.  First we specify a recipe that identifies our variables and data, converts the package variable to a numerical form, and then adds a polynomial effect with step_poly()
 
+```{r setup, include=FALSE}
+library("tidymodels")
+library("tidyverse")
+library("dplyr")
+library("janitor")
+library("corrplot")
+library(lubridate)
+dat <- read_csv(file = "https://raw.githubusercontent.com/MaRo406/eds-232-machine-learning/main/data/pumpkin-data.csv")
+```
+
+
+```{r, include=FALSE}
+# prepare data based on lab 1
+# Clean names to the snake_case convention
+pumpkins <- dat %>% clean_names(case = "snake")
+
+# select cols
+pumpkins <- pumpkins %>% select(variety, city_name, package, low_price, high_price, date)
+# Extract the month and day from the dates and add as new columns
+pumpkins <- pumpkins %>%
+  mutate(date = mdy(date),  
+         day = yday(date),
+         month = month(date))
+pumpkins %>% 
+  select(-day)
+
+# Create a new column price
+pumpkins <- pumpkins %>% 
+  mutate(price = (low_price+ high_price)/2)
+
+# Retain only pumpkins with "bushel" in the package column
+new_pumpkins <- pumpkins %>%
+  filter(str_detect(package, "bushel"))
+
+# Convert the price if the Package contains fractional bushel values
+new_pumpkins <- new_pumpkins %>% 
+  mutate(price = case_when(
+    str_detect(package, "1 1/9") ~ price/(1.1),
+    str_detect(package, "1/2") ~ price*2,
+    TRUE ~ price))
+
+# Specify a recipe
+pumpkins_recipe <- recipe(price ~ ., data = new_pumpkins) %>% 
+  step_integer(all_predictors(), zero_based = TRUE)
+# Prep the recipe
+pumpkins_prep <- prep(pumpkins_recipe)
+
+# Bake the recipe to extract a preprocessed new_pumpkins data
+baked_pumpkins <- bake(pumpkins_prep, new_data = NULL)
+
+set.seed(123)
+# Split the data into training and test sets
+pumpkins_split <- baked_pumpkins %>% 
+  initial_split(prop = 0.8)
+
+
+# Extract training and test data
+pumpkins_train <- training(pumpkins_split)
+pumpkins_test <- testing(pumpkins_split)
+
+# Create a recipe for preprocessing the data
+lm_pumpkins_recipe <- recipe(price ~ package, data = pumpkins_train) %>% 
+  step_integer(all_predictors(), zero_based = TRUE)
+
+# Encode package column
+package_encode <- lm_pumpkins_recipe %>% 
+  prep() %>% 
+  bake(new_data = pumpkins_test) %>% 
+  select(package)
+```
+
 ```{r}
 # Specify a recipe
 poly_pumpkins_recipe <-
