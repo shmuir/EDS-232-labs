@@ -1,3 +1,4 @@
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
@@ -5,40 +6,46 @@ library(tidyverse)
 library(tidymodels)
 library(spData)
 library(ggpmisc)
-
-sf_use_s2(FALSE)
 ```
 
 ```{r}
-redlining = read_csv(here::here("discussion", "data", "redlining.csv")) %>% 
+redlining = read_csv(here::here("week-4", "redlining.csv")) %>% 
   left_join(us_states_df %>% rename(name = state)) %>% 
   janitor::clean_names()
 ```
 
 ```{r}
-
+ggplot(redlining) +
+  geom_point(aes(x = poverty_level_10, y = percent))
 ```
 
 ```{r}
-
+ggplot(redlining) +
+  geom_point(aes(median_income_10, percent))
 ```
 
 ```{r}
-
+ggplot(redlining) +
+  geom_boxplot(aes(region, percent)) +
+  geom_point(aes(region, percent))
 ```
 
 ```{r}
-
+ggplot(redlining) +
+  geom_point(aes(total_pop_10, percent))
 ```
 
-```{r}
-
-```
+- none of these variables look to be strongly correlated with percent holc grades, so we can guess that the model isn't going to perform very well
 
 ### Data Splitting
 
 ```{r}
+set.seed(525)
+split <- initial_split(redlining, prop = 0.7)
+train <- training(split)
+test <- testing(split)
 
+folds <- vfold_cv(train, v = 5, repeats = 2) # same as cross fold validation
 ```
 
 ### Recipe Specification
@@ -55,11 +62,19 @@ recipe <- recipe(percent ~ region + area + total_pop_10 + median_income_10 + pov
 ### Model: Tuned Linear Regression
 
 ```{r}
+lm_model <- linear_reg(penalty = tune(), mixture = tune()) %>% # tune specifies that we're tuning those parameters
+  set_engine("glmnet") %>%
+  set_mode("regression")
 
+lm_model
 ```
 
 ```{r}
+lm_wflw <- workflow() %>%
+  add_model(lm_model) %>%
+  add_recipe(recipe)
 
+lm_wflw
 ```
 
 ```{r}
@@ -67,7 +82,9 @@ recipe <- recipe(percent ~ region + area + total_pop_10 + median_income_10 + pov
 ```
 
 ```{r, eval = FALSE}
-
+lm_cv_tune <- lm_wflw %>%
+  tune_grid(resamples = folds, grid = 5) # taking 5 values from each of the parameters you're tuning
+# so if doing 3 parameters it would be 25 * 3
 ```
 
 ```{r}
@@ -75,11 +92,17 @@ recipe <- recipe(percent ~ region + area + total_pop_10 + median_income_10 + pov
 ```
 
 ```{r}
-
+collect_metrics(lm_cv_tune) # gives value of the mixture and penalty parameters for all cvs for that combo of parameters
 ```
 
 ```{r}
+autoplot(lm_cv_tune) +
+  theme_bw() +
+  labs(x = "Parameter Value", y = "Performance Metric")
 
+# value of the parameter that was tested on the x-axis
+# pick lowest rmse
+# pick highest rsq
 ```
 
 #### Finalize workflow
@@ -90,26 +113,45 @@ recipe <- recipe(percent ~ region + area + total_pop_10 + median_income_10 + pov
 ```
 
 ```{r}
+lm_best <- show_best(lm_cv_tune, n = 1, metric = "rmse")
+lm_best
 
+lm_final <- finalize_workflow(lm_wflw, select_best(lm_cv_tune, metric = "rmse"))
+lm_final
 ```
 
 ### Model Fitting
 
 ```{r, include=FALSE}
  # fit the data to the training data
+lm_fit <- fit(lm_final, train)
 ```
 
 ```{r, include=FALSE}
+train_predict <- predict(lm_fit, train) %>%
+  bind_cols(train)
 
+test_predict <- predict(lm_fit, test) %>%
+  bind_cols(test)
 ```
 
 ```{r}
+train_metrics <- train_predict %>%
+  metrics(percent, .pred)
+train_metrics
 
+test_metrics <- test_predict %>%
+  metrics(percent, .pred)
+test_metrics
 ```
 
 ### Visualization
 
 ```{r}
-
+ggplot(test_predict, aes(x = percent, y = .pred)) +
+  geom_point() +
+  stat_poly_line(se = FALSE) +
+  stat_poly_eq(use_label("eq")) +
+  stat_poly_eq(label.y = 0.9)
 ```
 
