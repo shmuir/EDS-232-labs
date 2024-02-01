@@ -6,7 +6,7 @@ output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
 library(tidyverse)
 library(rsample)
 library(glmnet)
@@ -138,14 +138,11 @@ Data scientists often use the "one-standard-error" rule when tuning lambda to se
 -   ***Question 8.*** Find the number of predictors associated with this model (hint: the \$nzero is the \# of predictors column).
 
 ```{r}
-# the number of predictors in the ridge model
-ab_ridge$nzero[ab_ridge$lambda == ab_ridge$lambda.1se]
-
 # the number of predictors in the lasso model
 ab_lasso$nzero[ab_lasso$lambda == ab_lasso$lambda.1se] 
 ```
 
 -   ***Question 9*****.** Which regularized regression worked better for this task, ridge or lasso? Explain your answer.
 
-**For this task, the lasso worked better. When just looking at the minimum MSE value, the lasso is smaller than ridge. When using the one-standard-error rule, the lasso model uses fewer predictors than the ridge. The lasso seems to be a more parsimonious model with fewer predictors within one standard error of the overall minimum cross validation error.**
+**For this task, the lasso worked better. When just looking at the minimum MSE value, the lasso is smaller than ridge. When using the one-standard-error rule, the lasso model uses fewer predictors than the ridge because of lasso's feature selection. The lasso seems to be a more parsimonious model with fewer predictors within one standard error of the overall minimum cross validation error.**
 
