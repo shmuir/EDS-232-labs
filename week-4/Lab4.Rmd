@@ -11,6 +11,7 @@ library(tidyverse)
 library(skimr)
 library(tidymodels)
 library(caret)
+library(patchwork)
 ```
 
 ## Lab 4: Fire and Tree Mortality
@@ -64,7 +65,6 @@ print(paste("We are using", nrow(trees_train), "observations for training"))
 Let's start our modeling effort with some simple models: one predictor and one outcome each.
 
 > Question 4: Choose the three predictors that most highly correlate with our outcome variable for further investigation.
->
 
 ```{r}
 library(corrplot)
@@ -75,7 +75,7 @@ corr_mat <- cor(trees_bake %>% select(-...1))
 corrplot(corr_mat, method = "shade", shade.col = NA, tl.col = "black", tl.srt = 45, addCoef.col = "black", cl.pos = "n", order = "original")
 ```
 
-The predictors that are the most highly correlated with yr1status are 
+The predictors that are the most highly correlated with yr1status are: 
 - DBH_cm
 - CVS_percent
 - BCHM_m
@@ -114,21 +114,27 @@ exp(coef(model_BCHM))
 
 > Question 7: Now let's visualize the results from these models. Plot the fit to the training data of each model.
 
-```{r}
-ggplot(trees_train, aes(x = DBH_cm, y = yr1status)) +
+```{r, message = FALSE}
+DBH_plot <- ggplot(trees_train, aes(x = DBH_cm, y = yr1status)) +
   geom_point() +
   stat_smooth(method = "glm", 
-              method.args = list(family = "binomial"))
+              method.args = list(family = "binomial")) +
+  theme_linedraw()
 
-ggplot(trees_train, aes(x = BCHM_m, y = yr1status)) +
+BCHM_plot <- ggplot(trees_train, aes(x = BCHM_m, y = yr1status)) +
   geom_point() +
   stat_smooth(method = "glm", 
-              method.args = list(family = "binomial"))
+              method.args = list(family = "binomial")) +
+  theme_linedraw()
 
-ggplot(trees_train, aes(x = CVS_percent, y = yr1status)) +
+CVS_plot <- ggplot(trees_train, aes(x = CVS_percent, y = yr1status)) +
   geom_point() +
   stat_smooth(method = "glm", 
-              method.args = list(family = "binomial"))
+              method.args = list(family = "binomial")) +
+  theme_linedraw()
+
+# show plots
+DBH_plot + BCHM_plot + CVS_plot + plot_layout(ncol = 2)
 ```
 
 
@@ -139,12 +145,14 @@ Let's not limit ourselves to a single-predictor model. More predictors might lea
 > Question 8: Use glm() to fit a multiple logistic regression called "logistic_full", with all three of the predictors included. Which of these are significant in the resulting model?
 
 ```{r}
+# multiple logistic regression
 logistic_full <- glm(yr1status ~ DBH_cm + BCHM_m + CVS_percent, data = trees_train, family = "binomial")
+
 tidy(logistic_full)
 exp(coef(logistic_full))
 ```
 
-- For the full logistic model, all three of the predictors are significant in the model with p-values all <0.05.
+- For the full logistic model, all three of the predictors are significant in the model with p-values <0.05.
 
 ### Estimate Model Accuracy
 
@@ -152,40 +160,91 @@ Now we want to estimate our model's generalizability using resampling.
 
 > Question 9: Use cross validation to assess model accuracy. Use caret::train() to fit four 10-fold cross-validated models (cv_model1, cv_model2, cv_model3, cv_model4) that correspond to each of the four models we've fit so far: three simple logistic regression models corresponding to each of the three key predictors (CVS_percent, DBH_cm, BCHM_m) and a multiple logistic regression model that combines all three predictors.
 
-```{r}
-cv_model1 <- caret::train(yr1status ~ DBH_cm, data = trees_train, method = "glm")
-  
-cv_model2 <- caret::train(yr1status ~ BCHM_m, data = trees_train, method = "glm")
-  
-cv_model3 <- caret::train(yr1status ~ CVS_percent, data = trees_train, method = "glm")
-  
-cv_model4 <- caret::train(yr1status ~ DBH_cm + DBH_cm + CVS_percent, data = trees_train, method = "glm")
+```{r, warning=FALSE}
+# prepare data
+trees_train$yr1status <- as.factor(trees_train$yr1status)
+
+# subsets for cross validation 
+ctrl <- trainControl(method = "cv",
+                     number = 10)
+
+# train
+cv_model1 <- caret::train(yr1status ~ DBH_cm, 
+                          data = trees_train,
+                          method = "glm",
+                          family = "binomial",
+                          trControl = ctrl)
+cv_model2 <- caret::train(yr1status ~ BCHM_m, 
+                          data = trees_train,
+                          method = "glm",
+                          family = "binomial",
+                          trControl = ctrl)
+cv_model3 <- caret::train(yr1status ~ CVS_percent, 
+                          data = trees_train,
+                          method = "glm",
+                          family = "binomial",
+                          trControl = ctrl)
+cv_model4 <- caret::train(yr1status ~ CVS_percent + BCHM_m + DBH_cm, 
+                          data = trees_train,
+                          method = "glm",
+                          family = "binomial",
+                          trControl = ctrl)
 ```
 
 > Question 10: Use caret::resamples() to extract then compare the classification accuracy for each model. (Hint: resamples() wont give you what you need unless you convert the outcome variable to factor form). Which model has the highest accuracy?
 
 ```{r}
-resamps <- resamples(list(DBH = cv_model1,
-               BCHM = cv_model2,
-               CVS = cv_model3,
-               full = cv_model4))
+# re-sampling results
+resamps <- resamples(list(
+    cv_model1 = cv_model1, 
+    cv_model2 = cv_model2, 
+    cv_model3 = cv_model3,
+    cv_model4 = cv_model4))
 
-summary(resamps)
+# extract performance
+summary(resamps)$statistic$Accuracy
 ```
 
+- The fourth model with with all three key predictors has the highest accuracy.
 
 Let's move forward with this single most accurate model.
 
 > Question 11: Compute the confusion matrix and overall fraction of correct predictions by the model.
->
+
+```{r}
+# predict
+predicted <- predict(cv_model4, trees_train)
+
+# confusion matrix
+confusionMatrix(data = predicted, 
+                reference = trees_train$yr1status)
+```
+
 > Question 12: Explain what the confusion matrix is telling you about the types of mistakes made by logistic regression.
->
+
+- The confusion matrix predicted 1572 trees should be alive (0) when they are actually dead (1) (false negative) and predicted 852 trees would be dead when they are actually alive (false positive). It predicted 22,822 tree's mortality status correctly.
+
+
 > Question 13: What is the overall accuracy of the model? How is this calculated?
+
+- The confusion matrix is telling us that the model is ~90% accurate. This is calculated by summing the number of correctly classified and dividing by the total number of values.
 
 ### Test Final Model
 
 Alright, now we'll take our most accurate model and make predictions on some unseen data (the test data).
 
 > Question 14: Now that we have identified our best model, evaluate it by running a prediction on the test data, trees_test.
->
+
+```{r}
+# generating test metrics
+predicted_test <- predict(cv_model4, trees_test) %>%
+  bind_cols(trees_test) %>%
+  rename("pred" = "...1") %>%
+  mutate(pred = as.numeric(pred))
+
+predicted_test %>%
+  metrics(yr1status, pred)
+```
+
+
 > Question 15: How does the accuracy of this final model on the test data compare to its cross validation accuracy? Do you find this to be surprising? Why or why not?
