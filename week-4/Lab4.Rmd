@@ -34,7 +34,7 @@ trees_dat <- read_csv(file = "https://raw.githubusercontent.com/MaRo406/eds-232-
 trees_binary <- trees_dat %>%
   select(-...1) %>%
   recipe(yr1status~., data = trees_dat) %>%
-  step_integer(c(YrFireName, Species, Genus_species), zero_based = TRUE) %>% # don't want to transform the numberic variables
+  step_integer(c(YrFireName, Species, Genus_species), zero_based = TRUE) %>% # don't want to transform the numeric variables
   prep(trees_dat)
 
 trees_bake <- bake(trees_binary, new_data = NULL)
@@ -106,11 +106,11 @@ exp(coef(model_CVS))
 exp(coef(model_BCHM))
 ```
 
-- The odds of tree mortality after a fire increases multiplicatively by 1.23 for each 1m increase in maximum bark char height from the ground on a tree bole.
+- The odds of tree mortality 1 year after a fire after a fire increases multiplicatively by 1.23 for each 1m increase in maximum bark char height from the ground on a tree bole.
 
-- The odds of tree mortality after a fire increases multiplicatively by 0.94 for each 1cm increase in the diameter at breast height.
+- The odds of tree mortality 1 year after a fire after a fire increases multiplicatively by 0.94 for each 1cm increase in the diameter at breast height.
 
-- The odds of tree mortality after a fire increases multiplicatively by 1.079 for each 1 percent increase in pre-fire crown volume that was scorched or consumed by fire.
+- The odds of tree mortality 1 year after a fire after a fire increases multiplicatively by 1.079 for each 1 percent increase in pre-fire crown volume that was scorched or consumed by fire.
 
 > Question 7: Now let's visualize the results from these models. Plot the fit to the training data of each model.
 
@@ -227,7 +227,7 @@ confusionMatrix(data = predicted,
 
 > Question 13: What is the overall accuracy of the model? How is this calculated?
 
-- The confusion matrix is telling us that the model is ~90% accurate. This is calculated by summing the number of correctly classified and dividing by the total number of values.
+- The confusion matrix is telling us that the model is ~90% accurate. This is calculated by summing the number of correctly classified and dividing by the total number of predictions.
 
 ### Test Final Model
 
@@ -244,7 +244,17 @@ predicted_test <- predict(cv_model4, trees_test) %>%
 
 predicted_test %>%
   metrics(yr1status, pred)
+
+# confusion matrix
+predicted_test_conf <-  predict(cv_model4, trees_test) %>%
+  bind_cols(trees_test)
+
+confusionMatrix(data = predicted_test_conf, 
+                reference = as.factor(predicted_test)$yr1status)
 ```
 
 
 > Question 15: How does the accuracy of this final model on the test data compare to its cross validation accuracy? Do you find this to be surprising? Why or why not?
+
+This final model is pretty similar in accuracy to the cross validation accuracy. I think this was expected since we had a relatively high accuracy and all of the vairbles we used for prediction seem to be significant contributors. 
+
