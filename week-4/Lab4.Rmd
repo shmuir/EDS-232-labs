@@ -6,7 +6,7 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 library(tidyverse)
 library(skimr)
 library(tidymodels)
@@ -205,7 +205,7 @@ resamps <- resamples(list(
 summary(resamps)$statistic$Accuracy
 ```
 
-- The fourth model with with all three key predictors has the highest accuracy.
+- The fourth model, the logistic regression model, has the highest mean accuracy (0.904). The other three models DBH, BCHM, and CVS have a mean accuracy of 0.751, 0.771, and 0.898 respectively. 
 
 Let's move forward with this single most accurate model.
 
@@ -227,7 +227,7 @@ confusionMatrix(data = predicted,
 
 > Question 13: What is the overall accuracy of the model? How is this calculated?
 
-- The confusion matrix is telling us that the model is ~90% accurate. This is calculated by summing the number of correctly classified and dividing by the total number of predictions.
+- The confusion matrix is telling us that the model is ~90% accurate. This is calculated by summing the number of correctly classified and dividing by the total number of predictions (0.904).
 
 ### Test Final Model
 
@@ -246,15 +246,14 @@ predicted_test %>%
   metrics(yr1status, pred)
 
 # confusion matrix
-predicted_test_conf <-  predict(cv_model4, trees_test) %>%
-  bind_cols(trees_test)
+predicted_test_conf <-  predict(cv_model4, trees_test)
 
 confusionMatrix(data = predicted_test_conf, 
-                reference = as.factor(predicted_test)$yr1status)
+                reference = as.factor(predicted_test$yr1status))
 ```
 
 
 > Question 15: How does the accuracy of this final model on the test data compare to its cross validation accuracy? Do you find this to be surprising? Why or why not?
 
-This final model is pretty similar in accuracy to the cross validation accuracy. I think this was expected since we had a relatively high accuracy and all of the vairbles we used for prediction seem to be significant contributors. 
+- This final model is pretty similar in accuracy to the cross validation accuracy. I think this was expected since we built the model using the three highly correlated variables and were significant contributors. Getting this accuracy is the hope since  the training data should be a relatively accurate representation of the whole data set, so it's good that this model is able to predict with about equal accuracy on the test data. 
 
