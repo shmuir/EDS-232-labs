@@ -23,6 +23,7 @@ You have two options for completing this lab.
 library(spotifyr) #API interaction
 library(tidyverse)
 library(tidymodels)
+source("week-5/keys.R")
 ```
 
 Client ID and Client Secret are required to create and access token that is required to interact with the API. You can set them as system values so we don't have to do provide them each time.
@@ -70,13 +71,20 @@ audio_features <- rbind(audio1, audio2)
 These track audio features are the predictors we are interested in, but this dataframe doesn't have the actual names of the tracks. Append the 'track.name' column from your favorite tracks database.
 
 ```{r}
-named_audio <- my_tracks %>%
+sam_audio <- my_tracks %>%
   select(track.name) %>%
-  bind_cols(audio_features)
+  bind_cols(audio_features) %>%
+  mutate(name = "sam")
 ```
 
 
 Find a class mate whose data you would like to use. Add your partner's data to your dataset. Create a new column that will contain the outcome variable that you will try to predict. This variable should contain two values that represent if the track came from your data set or your partner's.
+
+```{r}
+anna_audio <- read_csv("week-5/named_audio_anna.csv") %>%
+  mutate(name = "anna")
+```
+
 
 **Option 2: Data preparation**
 
