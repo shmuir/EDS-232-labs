@@ -6,3 +6,5 @@
 *.log
 *.DS_Store
 *.csv
+keys.R
+.httr-oauth
