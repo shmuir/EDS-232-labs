@@ -1,6 +1,6 @@
 ---
 title: "Lab5"
-author: "Your Name"
+author: "Sam Muir"
 date: "2023-02-07"
 output: html_document
 ---
@@ -41,22 +41,22 @@ access_token <- get_spotify_access_token() #takes ID and SECRET, sends to Spotif
 
 You can use get_my_saved_tracks() to request all your liked tracks. It would be good if you had at least 150-200 liked tracks so the model has enough data to work with. If you don't have enough liked tracks, you can instead use get_my_recently_played(), and in that case grab at least 500 recently played tracks if you can.
 
-```{r}
-my_tracks1 <- get_my_saved_tracks(authorization = authorization_code, limit = 50)
-my_tracks2 <- get_my_saved_tracks(authorization = authorization_code, limit = 50, offset = 50)
-my_tracks3 <- get_my_saved_tracks(authorization = authorization_code, limit = 50, offset = 100)
-my_tracks4 <- get_my_saved_tracks(authorization = authorization_code, limit = 50, offset = 150)
-
-my_tracks <- rbind(my_tracks1, my_tracks2, my_tracks3, my_tracks4)
-```
-
-
 The Spotify API returns a dataframe of tracks and associated attributes. However, it will only return up to 50 (or 20) tracks at a time, so you will have to make multiple requests. Use a function to combine all your requests in one call.
 
 ```{r}
+offsets = seq(from = 0, to = 150, by = 50)
 
+#initializing an empty df 
+my_tracks <- data.frame(matrix(nrow = 0, ncol = 30))
+
+# function to get my 150 most recently liked tracks 
+for (i in seq_along(offsets)) {  
+  liked_tracks = get_my_saved_tracks(authorization = authorization_code, limit = 50, 
+                                     offset = offsets[i])
+  df_temp = as.data.frame(liked_tracks) # creating a temporary data frame to store the 50 liked tracks from a given run
+  my_tracks <- rbind(my_tracks, df_temp) # binding the temporary data frame to my liked tracks data frame 
+}
 ```
-
 
 Once you have your tracks, familiarize yourself with this initial dataframe. You'll need to request some additional information for the analysis. If you give the API a list of track IDs using get_track_audio_features(), it will return an audio features dataframe of all the tracks and some attributes of them.
 
@@ -83,6 +83,8 @@ Find a class mate whose data you would like to use. Add your partner's data to y
 ```{r}
 anna_audio <- read_csv("week-5/named_audio_anna.csv") %>%
   mutate(name = "anna")
+
+both_audio <- rbind(sam_audio, anna_audio)
 ```
 
 
@@ -98,11 +100,198 @@ Let's take a look at your data. Do some exploratory summary stats and visualizat
 
 For example: What are the most danceable tracks in your dataset? What are some differences in the data between users (Option 1) or genres (Option 2)?
 
+```{r}
+ggplot(both_audio, aes(x = danceability, fill = name)) +
+  geom_density(alpha=0.5) +
+  scale_fill_manual(values=c("magenta4", "seagreen"))+
+  labs(x="Danceability", y="Density", title = "Distribution of Music Danceability Data") +
+  guides(fill=guide_legend(title="Listener"))+
+  theme_minimal()
+
+
+ggplot(both_audio, aes(x = energy, fill = name)) +
+  geom_density(alpha=0.6) +
+  scale_fill_manual(values=c("magenta4", "seagreen"))+
+  labs(x="Energy", y="Density", title = "Distribution of Music Energy Data") +
+  guides(fill=guide_legend(title="Listener"))+
+  theme_minimal()
+```
+
+
 ### **Modeling**
 
 Create competing models that predict whether a track belongs to:
 
 Option 1. you or your partner's collection
+
+### KNN
+
+```{r}
+all_tracks_modeling <- both_audio %>%  
+  mutate_if(is.ordered, .funs = factor, ordered = F) %>%
+  select(-track.name, -type, -id, -uri, -track_href, -analysis_url) %>%
+  mutate(name = as.factor(name))
+```
+
+
+```{r}
+#splitting the data
+set.seed(123)
+
+#initial split of data
+tracks_split <- initial_split(all_tracks_modeling, prop = 0.7)
+tracks_train <- training(tracks_split)
+tracks_test <- testing(tracks_split)
+```
+
+```{r}
+# create a recipe
+tracks_recipe <- recipe(name ~ ., data = tracks_train) %>%
+ # step_dummy(all_nominal()) %>%
+  step_normalize(all_numeric()) %>% #normalize numeric to make sure scale is okay
+  prep()
+```
+
+```{r}
+# Define our KNN model with tuning
+knn_spec_tune <- nearest_neighbor(neighbor = tune()) %>%
+  set_mode("classification") %>%
+  set_engine("kknn")
+
+# Check the model
+knn_spec_tune
+```
+
+```{r}
+# Define a new workflow
+wf_knn_tune <- workflow() %>%
+  add_model(knn_spec_tune) %>%
+  add_recipe(tracks_recipe)
+
+# 10-fold CV on the training dataset
+set.seed(123)
+
+cv_folds <- tracks_train %>%
+  vfold_cv(v = 10)
+
+
+# Fit the workflow on our predefined folds and hyperparameters
+fit_knn_cv <- wf_knn_tune %>%
+  tune_grid(resamples = cv_folds,
+            grid = 10)
+    
+# Check the performance with collect_metrics()
+collect_metrics(fit_knn_cv)
+
+autoplot(fit_knn_cv) + # plot cv results for parameter tuning
+  theme_bw()
+```
+
+
+```{r}
+# The final workflow for our KNN model
+final_wf <- wf_knn_tune %>%
+  finalize_workflow(select_best(fit_knn_cv, metric = "roc_auc"))
+
+train_fit = fit(final_wf, tracks_train)
+
+train_predict = predict(object = train_fit, new_data = tracks_train) %>% #predict the training set
+  bind_cols(tracks_train) #bind training set column to prediction
+
+test_predict = predict(train_fit, tracks_test) %>% #get prediction probabilities for test 
+  bind_cols(tracks_test) %>%  #bind to testing column
+  mutate(name = as.factor(name))
+```
+
+
+```{r}
+accuracy(train_predict, truth = name, estimate = .pred_class) #get training accuracy
+
+sensitivity(train_predict, truth = name, estimate = .pred_class)
+specificity(train_predict, truth = name, estimate = .pred_class)
+```
+
+```{r}
+accuracy(test_predict, truth = name, estimate = .pred_class) #get accuracy of testing prediction
+
+sensitivity(test_predict, truth = name, estimate = .pred_class)
+specificity(test_predict, truth = name, estimate = .pred_class)
+```
+
+
+```{r}
+# Optimizing workflow
+final_fit <- final_wf %>% 
+  last_fit(tracks_split)
+
+# Collect metrics on the test data!
+final_fit %>% 
+  collect_metrics()
+```
+
+```{r}
+test_predict %>%
+  conf_mat(truth = name, estimate = .pred_class) %>%
+  autoplot(type = 'heatmap') +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```
+
+
+## Decision Tree
+
+```{r}
+# Modeling packages
+library(rpart)       # direct engine for decision tree application
+library(caret)       # meta engine for decision tree application
+
+# Model interpretability packages
+library(rpart.plot)  # for plotting decision trees
+library(vip)         # for feature importance
+library(pdp)
+```
+
+
+```{r}
+tracks_dt1 <- rpart(formula = name ~ .,
+                    data    = tracks_train,
+                    method  = "anova")
+
+rpart.plot(tracks_dt1)
+plotcp(tracks_dt1)
+```
+
+```{r}
+tracks_dt2 <- rpart(
+    formula = name ~ .,
+    data    = tracks_train,
+    method  = "anova", 
+    control = list(cp = 0, xval = 10)
+)
+
+plotcp(tracks_dt2)
+abline(v = 11, lty = "dashed")
+```
+
+```{r}
+# caret cross validation results
+
+tracks_dt3 <- train(
+  name ~ .,
+  data = tracks_train,
+  method = "rpart",
+  trControl = trainControl(method = "cv", number = 10),
+  tuneLength = 20
+)
+
+ggplot(tracks_dt3)
+```
+
+```{r}
+# feature interpretation
+vip(tracks_dt3, num_features = 40, geom = "point")
+```
+
 
 Option 2. genre 1 or genre 2
 
