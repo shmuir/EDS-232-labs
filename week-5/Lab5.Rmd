@@ -358,6 +358,17 @@ You will eventually create four final candidate models:
 3.  bagged tree (Week 6)
     -   bag_tree()
     -   Use the "times =" argument when setting the engine during model specification to specify the number of trees. The rule of thumb is that 50-500 trees is usually sufficient. The bottom of that range should be sufficient here.
+    
+```{r}
+bag_tree(cost_complexity = tune(), 
+         min_n = tune()) %>% 
+  set_engine("rpart", times = 50) %>% 
+  set_mode("classification")
+
+bag_grid <- 
+```
+
+
 4.  random forest (Week 6)
     -   rand_forest()
     -   m_try() is the new hyperparameter of interest for this type of model. Make sure to include it in your tuning process
