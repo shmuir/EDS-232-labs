@@ -139,7 +139,7 @@ all_tracks_modeling <- both_audio %>%
 set.seed(123)
 
 #initial split of data
-tracks_split <- initial_split(all_tracks_modeling, prop = 0.7)
+tracks_split <- initial_split(all_tracks_modeling, prop = 0.75)
 tracks_train <- training(tracks_split)
 tracks_test <- testing(tracks_split)
 ```
@@ -147,8 +147,8 @@ tracks_test <- testing(tracks_split)
 ```{r}
 # create a recipe
 tracks_recipe <- recipe(name ~ ., data = tracks_train) %>%
- # step_dummy(all_nominal()) %>%
-  step_normalize(all_numeric()) %>% #normalize numeric to make sure scale is okay
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors()) %>% #normalize numeric to make sure scale is okay
   prep()
 ```
 
@@ -251,45 +251,101 @@ library(vip)         # for feature importance
 library(pdp)
 ```
 
-
 ```{r}
-tracks_dt1 <- rpart(formula = name ~ .,
-                    data    = tracks_train,
-                    method  = "anova")
-
-rpart.plot(tracks_dt1)
-plotcp(tracks_dt1)
+#Preprocess the data
+tracks_rec <- recipe(name ~ ., data = tracks_train) %>%
+  step_dummy(all_nominal_predictors(), one_hot = TRUE) %>%
+  step_normalize(all_numeric_predictors())
 ```
 
 ```{r}
-tracks_dt2 <- rpart(
-    formula = name ~ .,
-    data    = tracks_train,
-    method  = "anova", 
-    control = list(cp = 0, xval = 10)
+#new spec, tell the model that we are tuning hyperparams
+tree_spec_tune <- decision_tree(
+  cost_complexity = tune(),
+  tree_depth = tune(),
+  min_n = tune()
+) %>%
+  set_engine("rpart") %>%
+  set_mode("classification")
+
+tree_grid <- grid_regular(cost_complexity(), tree_depth(), min_n(), levels = 5)
+tree_grid
+```
+
+```{r workflow_tree}
+wf_tree_tune <- workflow() %>%
+  add_recipe(tracks_recipe) %>%
+  add_model(tree_spec_tune)
+```
+
+```{r resampling}
+#set up k-fold cv. This can be used for all the algorithms
+tracks_cv <- tracks_train %>%
+  vfold_cv(v=10)
+
+tracks_cv
+```
+
+```{r}
+doParallel::registerDoParallel() #build trees in parallel
+#200s
+system.time(
+  tree_rs <- tune_grid(
+    wf_tree_tune,
+    resamples = tracks_cv,
+    grid = tree_grid,
+    metrics = metric_set(accuracy)
+  )
 )
 
-plotcp(tracks_dt2)
-abline(v = 11, lty = "dashed")
+tree_rs
 ```
 
+Use autoplot() to examine how different parameter configurations relate to accuracy 
 ```{r}
-# caret cross validation results
-
-tracks_dt3 <- train(
-  name ~ .,
-  data = tracks_train,
-  method = "rpart",
-  trControl = trainControl(method = "cv", number = 10),
-  tuneLength = 20
-)
-
-ggplot(tracks_dt3)
+autoplot(tree_rs) +
+  theme_bw()
 ```
 
-```{r}
-# feature interpretation
-vip(tracks_dt3, num_features = 40, geom = "point")
+```{r select_hyperparam}
+show_best(tree_rs) # showing
+select_best(tree_rs) # what we'll input
+```
+
+We can finalize the model specification where we have replaced the tune functions with optimized values.
+
+```{r final_tree_spec}
+final_tree <- finalize_workflow(wf_tree_tune, select_best(tree_rs))
+
+final_tree
+```
+
+This model has not been fit yet though.
+
+```{r final_tree_fit}
+#similar functions here.
+final_tree_fit <- fit(final_tree, data = tracks_train) 
+
+# last_fit() fit on the training data but then also evaluates on the testing data
+final_tree_result <- last_fit(final_tree, tracks_split)
+
+# testing predictions and metrics
+final_tree_result$.predictions 
+predict_data <- as.data.frame(final_tree_result$.predictions) %>%
+  bind_cols(tracks_test)
+
+final_tree_result$.metrics
+```
+
+#Visualize variable importance
+```{r tree_vip}
+final_tree_fit %>%
+  vip(geom = "point") +
+  theme_bw()
+
+# differences between groups
+ggplot(predict_data, aes(.pred_class, loudness)) +
+  geom_boxplot()
 ```
 
 
