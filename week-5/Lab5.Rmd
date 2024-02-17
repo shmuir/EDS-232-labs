@@ -20,16 +20,33 @@ You have two options for completing this lab.
 **Option 2**: **Classify by genres**. Build models that predict which genre a song belongs to. This will use a pre-existing Spotify dataset available from Kaggle.com (<https://www.kaggle.com/datasets/mrmorj/dataset-of-songs-in-spotify>)
 
 ```{r}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r}
 library(spotifyr) #API interaction
 library(tidyverse)
 library(tidymodels)
-source("week-5/keys.R")
+source(here::here("week-5","keys.R"))
+# Modeling packages
+library(rpart)       # direct engine for decision tree application
+library(caret)       # meta engine for decision tree application
+
+# Model interpretability packages
+library(rpart.plot)  # for plotting decision trees
+library(vip)         # for feature importance
+library(pdp)
+library(parsnip)
+library(baguette)
+
+library(gt)
+library(patchwork)
 ```
 
 Client ID and Client Secret are required to create and access token that is required to interact with the API. You can set them as system values so we don't have to do provide them each time.
 
-```{r access_API}
-Sys.setenv(SPOTIFY_CLIENT_ID = SPOTIFY_CLIENT_ID) 
+```{r access_API, eval=FALSE}
+Sys.setenv(SPOTIFY_CLIENT_ID = SPOTIFY_CLIENT_ID)
 Sys.setenv(SPOTIFY_CLIENT_SECRET = SPOTIFY_CLIENT_SECRET)
 
 authorization_code <- get_spotify_authorization_code(scope = scopes()[c(1:19)]) #sets an authorization code that you'll need to provide for certain get_ functions via my_tracks <- get_my_saved_tracks(authorization = authorization_code)
@@ -37,30 +54,30 @@ authorization_code <- get_spotify_authorization_code(scope = scopes()[c(1:19)]) 
 access_token <- get_spotify_access_token() #takes ID and SECRET, sends to Spotify and receives an access token
 ```
 
-**Option 1: Data Preparation**
+# **Option 1: Data Preparation**
 
 You can use get_my_saved_tracks() to request all your liked tracks. It would be good if you had at least 150-200 liked tracks so the model has enough data to work with. If you don't have enough liked tracks, you can instead use get_my_recently_played(), and in that case grab at least 500 recently played tracks if you can.
 
 The Spotify API returns a dataframe of tracks and associated attributes. However, it will only return up to 50 (or 20) tracks at a time, so you will have to make multiple requests. Use a function to combine all your requests in one call.
 
-```{r}
+```{r, eval=FALSE}
 offsets = seq(from = 0, to = 150, by = 50)
 
-#initializing an empty df 
+#initializing an empty df
 my_tracks <- data.frame(matrix(nrow = 0, ncol = 30))
 
-# function to get my 150 most recently liked tracks 
-for (i in seq_along(offsets)) {  
-  liked_tracks = get_my_saved_tracks(authorization = authorization_code, limit = 50, 
+# function to get my 150 most recently liked tracks
+for (i in seq_along(offsets)) {
+  liked_tracks = get_my_saved_tracks(authorization = authorization_code, limit = 50,
                                      offset = offsets[i])
-  df_temp = as.data.frame(liked_tracks) # creating a temporary data frame to store the 50 liked tracks from a given run
-  my_tracks <- rbind(my_tracks, df_temp) # binding the temporary data frame to my liked tracks data frame 
+  df_temp = as.data.frame(liked_tracks) # creating a temporary data frame
+  my_tracks <- rbind(my_tracks, df_temp) # binding the temporary data frame to my tracks data frame
 }
 ```
 
 Once you have your tracks, familiarize yourself with this initial dataframe. You'll need to request some additional information for the analysis. If you give the API a list of track IDs using get_track_audio_features(), it will return an audio features dataframe of all the tracks and some attributes of them.
 
-```{r}
+```{r, eval=FALSE}
 audio1 <- get_track_audio_features(my_tracks$track.id[1:100])
 audio2 <- get_track_audio_features(my_tracks$track.id[101:200])
 
@@ -70,31 +87,28 @@ audio_features <- rbind(audio1, audio2)
 
 These track audio features are the predictors we are interested in, but this dataframe doesn't have the actual names of the tracks. Append the 'track.name' column from your favorite tracks database.
 
-```{r}
+```{r, eval=FALSE}
 sam_audio <- my_tracks %>%
   select(track.name) %>%
   bind_cols(audio_features) %>%
   mutate(name = "sam")
+
+write_csv(sam_audio, "week-5/sam_audio.csv")
 ```
 
 
 Find a class mate whose data you would like to use. Add your partner's data to your dataset. Create a new column that will contain the outcome variable that you will try to predict. This variable should contain two values that represent if the track came from your data set or your partner's.
 
 ```{r}
-anna_audio <- read_csv("week-5/named_audio_anna.csv") %>%
+sam_audio <- read_csv(here::here("week-5/sam_audio.csv"))
+anna_audio <- read_csv(here::here("week-5/named_audio_anna.csv")) %>%
   mutate(name = "anna")
 
 both_audio <- rbind(sam_audio, anna_audio)
 ```
 
 
-**Option 2: Data preparation**
-
-Download the Spotify dataset from <https://www.kaggle.com/datasets/mrmorj/dataset-of-songs-in-spotify>
-
-Inspect the data. Choose two genres you'd like to use for the classification task. Filter down the data to include only the tracks of that genre.
-
-###Data Exploration (both options)
+## Data Exploration
 
 Let's take a look at your data. Do some exploratory summary stats and visualization.
 
@@ -118,148 +132,111 @@ ggplot(both_audio, aes(x = energy, fill = name)) +
 ```
 
 
-### **Modeling**
+# **Modeling**
 
-Create competing models that predict whether a track belongs to:
-
-Option 1. you or your partner's collection
-
-### KNN
+### Prepare data
 
 ```{r}
+# prepare data ----
 all_tracks_modeling <- both_audio %>%  
   mutate_if(is.ordered, .funs = factor, ordered = F) %>%
   select(-track.name, -type, -id, -uri, -track_href, -analysis_url) %>%
   mutate(name = as.factor(name))
-```
 
-
-```{r}
-#splitting the data
+#splitting the data ----
 set.seed(123)
 
-#initial split of data
 tracks_split <- initial_split(all_tracks_modeling, prop = 0.75)
 tracks_train <- training(tracks_split)
 tracks_test <- testing(tracks_split)
-```
 
-```{r}
-# create a recipe
+# create a recipe ----
 tracks_recipe <- recipe(name ~ ., data = tracks_train) %>%
   step_dummy(all_nominal_predictors()) %>%
   step_normalize(all_numeric_predictors()) %>% #normalize numeric to make sure scale is okay
   prep()
 ```
 
+Create competing models that predict whether a track belongs to:
+
+Option 1. you or your partner's collection
+
+You will eventually create four final candidate models:
+
+## 1.  k-nearest neighbor (Week 5)
+
 ```{r}
-# Define our KNN model with tuning
+# Define our KNN model with tuning ----
 knn_spec_tune <- nearest_neighbor(neighbor = tune()) %>%
   set_mode("classification") %>%
   set_engine("kknn")
 
 # Check the model
-knn_spec_tune
-```
+#knn_spec_tune
 
-```{r}
-# Define a new workflow
+# Define a new workflow ----
 wf_knn_tune <- workflow() %>%
   add_model(knn_spec_tune) %>%
   add_recipe(tracks_recipe)
 
-# 10-fold CV on the training dataset
+# 10-fold CV on the training dataset ----
 set.seed(123)
 
 cv_folds <- tracks_train %>%
   vfold_cv(v = 10)
 
-
-# Fit the workflow on our predefined folds and hyperparameters
+# Fit the workflow on our predefined folds and hyperparameters ----
 fit_knn_cv <- wf_knn_tune %>%
   tune_grid(resamples = cv_folds,
             grid = 10)
     
 # Check the performance with collect_metrics()
-collect_metrics(fit_knn_cv)
+#collect_metrics(fit_knn_cv)
 
-autoplot(fit_knn_cv) + # plot cv results for parameter tuning
+# plot cv results for parameter tuning ----
+autoplot(fit_knn_cv) + 
   theme_bw()
-```
 
-
-```{r}
-# The final workflow for our KNN model
-final_wf <- wf_knn_tune %>%
+# The final workflow for our KNN model ----
+final_knn_wf <- wf_knn_tune %>%
   finalize_workflow(select_best(fit_knn_cv, metric = "roc_auc"))
 
-train_fit = fit(final_wf, tracks_train)
+train_knn_fit <- fit(final_knn_wf, tracks_train)
 
-train_predict = predict(object = train_fit, new_data = tracks_train) %>% #predict the training set
+train_predict <- predict(object = train_knn_fit, new_data = tracks_train) %>% #predict the training set
   bind_cols(tracks_train) #bind training set column to prediction
 
-test_predict = predict(train_fit, tracks_test) %>% #get prediction probabilities for test 
+test_knn_predict <- predict(train_knn_fit, tracks_test) %>% #get prediction probabilities for test 
   bind_cols(tracks_test) %>%  #bind to testing column
   mutate(name = as.factor(name))
-```
 
-
-```{r}
+# report the accuracy for the training and testing ----
 accuracy(train_predict, truth = name, estimate = .pred_class) #get training accuracy
+accuracy(test_knn_predict, truth = name, estimate = .pred_class) #get accuracy of testing prediction
+# sensitivity(train_predict, truth = name, estimate = .pred_class)
+# specificity(train_predict, truth = name, estimate = .pred_class)
+# sensitivity(test_predict, truth = name, estimate = .pred_class)
+# specificity(test_predict, truth = name, estimate = .pred_class)
 
-sensitivity(train_predict, truth = name, estimate = .pred_class)
-specificity(train_predict, truth = name, estimate = .pred_class)
-```
-
-```{r}
-accuracy(test_predict, truth = name, estimate = .pred_class) #get accuracy of testing prediction
-
-sensitivity(test_predict, truth = name, estimate = .pred_class)
-specificity(test_predict, truth = name, estimate = .pred_class)
-```
-
-
-```{r}
-# Optimizing workflow
-final_fit <- final_wf %>% 
+# Optimizing workflow ----
+final_knn_fit <- final_knn_wf %>% 
   last_fit(tracks_split)
 
-# Collect metrics on the test data!
-final_fit %>% 
-  collect_metrics()
+# last_fit() fit on the training data but then also evaluates on the testing data
+final_knn_result <- last_fit(final_knn_wf, tracks_split)
+
+# testing predictions and metrics ----
+#final_knn_result$.predictions 
+knn_predict_data <- as.data.frame(final_knn_result$.predictions) %>%
+  bind_cols(tracks_test)
+
+final_knn_result$.metrics
 ```
 
-```{r}
-test_predict %>%
-  conf_mat(truth = name, estimate = .pred_class) %>%
-  autoplot(type = 'heatmap') +
-  theme_bw() +
-  theme(axis.text.x = element_text(angle = 30, hjust = 1))
-```
-
-
-## Decision Tree
+## 2.  Decision Tree (Week 5)
 
 ```{r}
-# Modeling packages
-library(rpart)       # direct engine for decision tree application
-library(caret)       # meta engine for decision tree application
-
-# Model interpretability packages
-library(rpart.plot)  # for plotting decision trees
-library(vip)         # for feature importance
-library(pdp)
-```
-
-```{r}
-#Preprocess the data
-tracks_rec <- recipe(name ~ ., data = tracks_train) %>%
-  step_dummy(all_nominal_predictors(), one_hot = TRUE) %>%
-  step_normalize(all_numeric_predictors())
-```
-
-```{r}
-#new spec, tell the model that we are tuning hyperparams
+#new spec, tell the model that we are tuning hyperparams ----
 tree_spec_tune <- decision_tree(
   cost_complexity = tune(),
   tree_depth = tune(),
@@ -269,109 +246,251 @@ tree_spec_tune <- decision_tree(
   set_mode("classification")
 
 tree_grid <- grid_regular(cost_complexity(), tree_depth(), min_n(), levels = 5)
-tree_grid
-```
+#head(tree_grid)
 
-```{r workflow_tree}
+# setting up the workflow ----
 wf_tree_tune <- workflow() %>%
   add_recipe(tracks_recipe) %>%
   add_model(tree_spec_tune)
-```
 
-```{r resampling}
-#set up k-fold cv. This can be used for all the algorithms
+#set up k-fold cv. This can be used for all the algorithms ----
 tracks_cv <- tracks_train %>%
   vfold_cv(v=10)
+#tracks_cv
 
-tracks_cv
-```
-
-```{r}
+# build trees ----
 doParallel::registerDoParallel() #build trees in parallel
-#200s
-system.time(
-  tree_rs <- tune_grid(
-    wf_tree_tune,
-    resamples = tracks_cv,
-    grid = tree_grid,
-    metrics = metric_set(accuracy)
-  )
+tree_rs <- tune_grid(
+  wf_tree_tune,
+  resamples = tracks_cv,
+  grid = tree_grid,
+  metrics = metric_set(accuracy)
 )
 
-tree_rs
-```
-
-Use autoplot() to examine how different parameter configurations relate to accuracy 
-```{r}
+# Use autoplot() to examine how different parameter configurations relate to accuracy ----
 autoplot(tree_rs) +
   theme_bw()
-```
 
-```{r select_hyperparam}
-show_best(tree_rs) # showing
+# select hyperparameter ----
+#show_best(tree_rs) # showing
 select_best(tree_rs) # what we'll input
-```
 
-We can finalize the model specification where we have replaced the tune functions with optimized values.
-
-```{r final_tree_spec}
+# finalize the model specification where we have replaced the tune functions with optimized values ----
 final_tree <- finalize_workflow(wf_tree_tune, select_best(tree_rs))
+#final_tree
 
-final_tree
-```
-
-This model has not been fit yet though.
-
-```{r final_tree_fit}
-#similar functions here.
+# final fitting ----
 final_tree_fit <- fit(final_tree, data = tracks_train) 
 
 # last_fit() fit on the training data but then also evaluates on the testing data
 final_tree_result <- last_fit(final_tree, tracks_split)
 
-# testing predictions and metrics
-final_tree_result$.predictions 
-predict_data <- as.data.frame(final_tree_result$.predictions) %>%
-  bind_cols(tracks_test)
-
+# testing predictions and metrics ----
+#final_tree_result$.predictions 
 final_tree_result$.metrics
-```
 
-#Visualize variable importance
-```{r tree_vip}
+predict_tree_data <- predict(final_tree_fit, tracks_test) %>% #get prediction probabilities for test 
+  bind_cols(tracks_test) %>%  #bind to testing column
+  mutate(name = as.factor(name))
+
+#Visualize variable importance ----
 final_tree_fit %>%
   vip(geom = "point") +
   theme_bw()
 
 # differences between groups
-ggplot(predict_data, aes(.pred_class, loudness)) +
-  geom_boxplot()
+# ggplot(predict_tree_data, aes(.pred_class, duration_ms)) +
+#   geom_boxplot()
 ```
 
-
-Option 2. genre 1 or genre 2
-
-You will eventually create four final candidate models:
-
-1.  k-nearest neighbor (Week 5)
-2.  decision tree (Week 5)
-3.  bagged tree (Week 6)
+## 3.  bagged tree (Week 6)
     -   bag_tree()
     -   Use the "times =" argument when setting the engine during model specification to specify the number of trees. The rule of thumb is that 50-500 trees is usually sufficient. The bottom of that range should be sufficient here.
     
 ```{r}
-bag_tree(cost_complexity = tune(), 
-         min_n = tune()) %>% 
-  set_engine("rpart", times = 50) %>% 
+# set up the bagged tree model ----
+bagged_tree <- bag_tree(
+  cost_complexity = tune(),
+  min_n = tune()
+) %>%
+  set_engine("rpart", times = 50) %>%
   set_mode("classification")
 
-bag_grid <- 
+# workflow ----
+wf_bag_tune <- workflow() %>%
+  add_recipe(tracks_recipe) %>%
+  add_model(bagged_tree)
+
+# set up the tuning ----
+bag_grid <- grid_regular(cost_complexity(), min_n(), levels = 5)
+
+bag_rs <- tune_grid(
+  wf_bag_tune,
+  resamples = tracks_cv,
+  grid = bag_grid,
+  metrics = metric_set(accuracy))
+
+
+# select hyperparameter ----
+#show_best(bag_rs) # showing
+select_best(bag_rs) # what we'll input
+
+# finalize the model specification ----
+final_bag <- finalize_workflow(wf_bag_tune, select_best(bag_rs))
+#final_bag
+
+# final fitting ----
+final_bag_fit <- fit(final_bag, data = tracks_train) 
+
+# last_fit() fit on the training data but then also evaluates on the testing data
+final_bag_result <- last_fit(final_bag, tracks_split)
+
+# testing predictions and metrics ----
+bag_data <- predict(final_bag_fit, tracks_test) %>% #get prediction probabilities for test 
+  bind_cols(tracks_test) %>%  #bind to testing column
+  mutate(name = as.factor(name))
+
+#final_bag_result$.predictions 
+
+# report final metrics ----
+final_bag_result$.metrics
 ```
 
 
-4.  random forest (Week 6)
+## 4. Random Forest (Week 6)
     -   rand_forest()
     -   m_try() is the new hyperparameter of interest for this type of model. Make sure to include it in your tuning process
+    
+```{r}
+# random forest ----
+rf_model <- rand_forest(mtry = tune(),
+                  trees = tune()) %>%
+  set_engine("ranger") %>%
+  set_mode("classification")
+
+# workflow ----
+rf_workflow <- workflow() %>%
+  add_model(rf_model) %>%
+  add_recipe(tracks_recipe)
+
+# parameter tuning ----
+rf_cv_tune <- rf_workflow %>%
+  tune_grid(resamples = cv_folds, grid = 10) #use cross validation to tune mtry and trees parameters
+
+#get metrics from tuning cv to pick best model ----
+#collect_metrics(rf_cv_tune) 
+
+#plot cv results for parameter tuning ----
+autoplot(rf_cv_tune) + 
+  theme_bw()
+
+# finalize workflow ----
+rf_best <- show_best(rf_cv_tune, n = 1, metric = "roc_auc") #get metrics for best random forest model
+rf_best
+
+rf_final <- finalize_workflow(rf_workflow,
+                              select_best(rf_cv_tune, metric = "roc_auc"))
+
+# model fitting ----
+train_fit_rf <- fit(rf_final, tracks_train) #fit the KNN model to the training set
+#train_fit_rf
+
+# prediction probabilities ----
+test_predict_rf <- predict(train_fit_rf, tracks_test) %>% #get prediction probabilities for test 
+  bind_cols(tracks_test) %>%  #bind to testing column
+  mutate(name = as.factor(name))
+
+test_predict2_rf <- predict(train_fit_rf, tracks_test, type = "prob") %>% #get testing prediction
+  bind_cols(tracks_test) %>%  #bind to testing column
+  mutate(name = as.factor(name))
+
+# model metrics and evaluation
+#accuracy(test_predict_rf, truth = name, estimate = .pred_class) #get accuracy of testing prediction
+
+rf_final_result <- last_fit(rf_final, tracks_split)
+
+# testing predictions and metrics ----
+#rf_final_result$.predictions 
+rf_predict_data <- as.data.frame(rf_final_result$.predictions) %>%
+  bind_cols(tracks_test)
+
+rf_final_result$.metrics
+
+# roc auc curve
+test_roc_auc_rf <- roc_curve(test_predict2_rf, name, .pred_anna)
+```
+
+# Comparison of model performance
+
+```{r}
+# store the final result metrics
+knn_metrics <- final_knn_result$.metrics[[1]]
+tree_metrics <- final_tree_result$.metrics[[1]]
+bag_metrics <- final_bag_result$.metrics[[1]]
+rf_metrics <- rf_final_result$.metrics[[1]]
+
+# combine tmetrics into df for table
+comparison_data <- data.frame(
+  Model = c("KNN", "Decision Tree", "Bagged Tree", "Random Forest"),
+  Accuracy = c(knn_metrics$.estimate[1], tree_metrics$.estimate[1], bag_metrics$.estimate[1], rf_metrics$.estimate[1]),
+  ROC_AUC = c(knn_metrics$.estimate[2], tree_metrics$.estimate[2], bag_metrics$.estimate[2], rf_metrics$.estimate[2])
+)
+
+# make table
+comparison_data %>%
+  gt() %>%
+  tab_header(
+    title = "Model Comparison",
+    subtitle = "Accuracy and ROC AUC on Testing Data"
+  ) %>%
+  fmt_number(
+    columns = c(Accuracy, ROC_AUC),
+    decimals = 3
+  )
+
+# pivot data for plottig
+comparison_data_long <- comparison_data %>%
+  pivot_longer(cols = c(Accuracy, ROC_AUC), names_to = "Metric", values_to = "Value")
+
+# plotting
+ggplot(comparison_data_long, aes(x = Model, y = Value, fill = Metric)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7, color = "black") +
+  labs(title = "Model Comparison",
+       y = "Metric Value") +
+  theme_minimal() +
+  scale_fill_manual(values = c("lightblue", "seagreen"))
+
+# confusion matrix
+knn_conf <- test_knn_predict %>%
+  conf_mat(truth = name, estimate = .pred_class) %>%
+  autoplot(type = 'heatmap') +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1)) +
+  labs(title = "KNN")
+rf_conf <- test_predict_rf %>% 
+  conf_mat(truth = name, estimate = .pred_class) %>% #create confusion matrix
+  autoplot(type = "heatmap") + #plot confusion matrix with heatmap
+  theme_bw() + #change theme
+  theme(axis.text.x = element_text(angle = 30, hjust=1)) +
+  #rotate axis labels
+  labs(title = "Random Forest")
+bag_conf <- bag_data %>%
+  conf_mat(truth = name, estimate = .pred_class) %>%
+  autoplot(type = 'heatmap') +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1)) +
+  labs(title = "Bagged Tree")
+tree_conf <- predict_tree_data %>%
+  conf_mat(truth = name, estimate = .pred_class) %>%
+  autoplot(type = 'heatmap') +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1)) +
+  labs(title = "Decision Tree")
+
+bag_conf + knn_conf + rf_conf + tree_conf
+```
+
+
 
 Go through the modeling process for each model:
 
