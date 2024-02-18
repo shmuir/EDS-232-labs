@@ -129,6 +129,11 @@ ggplot(both_audio, aes(x = energy, fill = name)) +
   labs(x="Energy", y="Density", title = "Distribution of Music Energy Data") +
   guides(fill=guide_legend(title="Listener"))+
   theme_minimal()
+
+rbind(anna_audio[which.max(anna_audio$danceability),],
+      sam_audio[which.max(sam_audio$danceability),]) %>%
+  select(track.name, danceability, name) %>%
+  gt::gt()
 ```
 
 
