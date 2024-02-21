@@ -19,7 +19,7 @@ You have two options for completing this lab.
 
 **Option 2**: **Classify by genres**. Build models that predict which genre a song belongs to. This will use a pre-existing Spotify dataset available from Kaggle.com (<https://www.kaggle.com/datasets/mrmorj/dataset-of-songs-in-spotify>)
 
-```{r}
+```{r, echo=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 ```
 
@@ -119,7 +119,7 @@ ggplot(both_audio, aes(x = danceability, fill = name)) +
   geom_density(alpha=0.5) +
   scale_fill_manual(values=c("magenta4", "seagreen"))+
   labs(x="Danceability", y="Density", title = "Distribution of Music Danceability Data") +
-  guides(fill=guide_legend(title="Listener"))+
+  guides(fill=guide_legend(title="Listener")) +
   theme_minimal()
 
 
@@ -127,13 +127,13 @@ ggplot(both_audio, aes(x = energy, fill = name)) +
   geom_density(alpha=0.6) +
   scale_fill_manual(values=c("magenta4", "seagreen"))+
   labs(x="Energy", y="Density", title = "Distribution of Music Energy Data") +
-  guides(fill=guide_legend(title="Listener"))+
+  guides(fill=guide_legend(title="Listener")) +
   theme_minimal()
 
 rbind(anna_audio[which.max(anna_audio$danceability),],
       sam_audio[which.max(sam_audio$danceability),]) %>%
   select(track.name, danceability, name) %>%
-  gt::gt()
+  gt::gt(caption = "Liked tracks with the highest danceability")
 ```
 
 
