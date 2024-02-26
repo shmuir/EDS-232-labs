@@ -28,7 +28,9 @@ library(rsample)
 eel_model_data <- read_csv("week-7/eel.model.data.csv") %>%
   mutate(Angaus = as.factor(Angaus)) %>%
   select(-Site)
-eel_eval_data <- read_csv("week-7/eel.eval.data.csv")
+eel_eval_data <- read_csv("week-7/eel.eval.data.csv") %>%
+  rename(Angaus = Angaus_obs) %>%
+  mutate(Angaus = as.factor(Angaus))
 ```
 
 ### Split and Resample
@@ -43,8 +45,8 @@ eel_testing <- testing(eel_split)
 
 #set up k-fold cv
 eel_cv <- eel_training %>%
-  vfold_cv(v=10)
-eel_cv
+  vfold_cv(v=10, strata = Angaus)
+#eel_cv
 ```
 
 
@@ -54,7 +56,7 @@ Create a recipe to prepare your data for the XGBoost model
 
 ```{r}
 eel_recipe <- recipe(Angaus ~ ., data = eel_training) %>% #create model recipe
-  step_dummy(all_nominal_predictors()) %>% #create dummy variables from all factors
+  step_dummy(all_nominal_predictors(), one_hot = TRUE) %>% #create dummy variables from all factors
   step_normalize(all_numeric_predictors()) #normalize all numeric predictors
 ```
 
@@ -70,12 +72,12 @@ Following the XGBoost tuning strategy outlined in lecture, first we conduct tuni
 -   Only specify one parameter to tune()
 
 ```{r}
-eel_model_learn <- boost_tree(learn_rate = tune()) %>%
+eel_spec_lr_tune <- boost_tree(trees = 3000, learn_rate = tune()) %>%
   set_engine("xgboost") %>%
   set_mode("classification")
 
-eel_workflow_learn <- workflow() %>% #create workflow
-  add_model(eel_model_learn) %>%
+eel_lr_tune_wf <- workflow() %>% #create workflow
+  add_model(eel_spec_lr_tune) %>%
   add_recipe(eel_recipe)
 ```
 
@@ -85,17 +87,26 @@ eel_workflow_learn <- workflow() %>% #create workflow
 -   Use appropriate metrics argument(s) - Computational efficiency becomes a factor as models get more complex and data get larger. Record the time it takes to run. Do this for each tuning phase you run.You could use {tictoc} or Sys.time().
 
 ```{r}
-grid <- expand.grid(learn_rate = seq(0.0001, 0.3, length.out = 30))
+# set up grid
+lr_grid <- expand.grid(learn_rate = seq(0.0001, 0.3, length.out = 30))
 
-system.time(eel_cv_tune <- eel_workflow_learn %>%
-  tune_grid(resamples = eel_cv, grid = grid))
+#set up code to run using parallel processing
+doParallel::registerDoParallel() 
+
+# tune lr
+system.time(
+  eel_cv_tune <- eel_lr_tune_wf %>%
+    tune_grid(resamples = eel_cv, 
+              grid = lr_grid,
+              metrics = metric_set(accuracy, roc_auc, pr_auc))
+  )
 ```
 
 
 3.  Show the performance of the best models and the estimates for the learning rate parameter values associated with each.
 
 ```{r}
-collect_metrics(eel_cv_tune)
+show_best(eel_cv_tune, metric = "roc_auc")
 ```
 
 
@@ -104,30 +115,59 @@ collect_metrics(eel_cv_tune)
 1.  Create a new specification where you set the learning rate (which you already optimized) and tune the tree parameters.
 
 ```{r}
-eel_model <- boost_tree(learn_rate = tune(), trees = tune()) %>%
-  set_engine("xgboost") %>%
-  set_mode("classification")
-
-eel_workflow <- workflow() %>% #create workflow
-  add_model(eel_model) %>%
-  add_recipe(eel_recipe)
+# XGBoost model spec
+eel_tree_param_spec <- 
+  parsnip::boost_tree(
+    mode = "classification",
+    trees = 3000,
+    min_n = tune(),
+    tree_depth = tune(),
+    loss_reduction = tune(),
+    learn_rate = select_best(eel_cv_tune, metric = "roc_auc")$learn_rate) %>%
+    set_engine("xgboost")
 ```
 
 
 2.  Set up a tuning grid. This time use grid_latin_hypercube() to get a representative sampling of the parameter space
 
 ```{r}
-grid_hypercube <- grid_latin_hypercube(learn_rate(), trees())
-  
-system.time(eel_full_tune <- eel_workflow %>%
-  tune_grid(resamples = eel_cv, grid = grid_hypercube))
+# grid specification
+xgboost_tree_params <- 
+  dials::parameters(
+    min_n(),
+    tree_depth(),
+    loss_reduction())
+
+# grid_latin_hypercube
+xgboost_tree_params_grid <- 
+  dials::grid_latin_hypercube( 
+    xgboost_tree_params,  
+    size = 50 #number of different parameter combinations 
+  )
+
+xgboost_tree_params_wf <- 
+  workflows::workflow() %>%
+  add_model(eel_tree_param_spec) %>% 
+  add_recipe(eel_recipe)
+
+set.seed(123)
+
+# hyperparameter tuning
+system.time(
+  xgboost_tree_params_tuned <- tune::tune_grid(
+  object = xgboost_tree_params_wf,
+  resamples = eel_cv,
+  grid = xgboost_tree_params_grid,
+  metrics = yardstick::metric_set(accuracy, roc_auc, pr_auc))
+  )
+
 ```
 
 
 3.  Show the performance of the best models and the estimates for the tree parameter values associated with each.
 
 ```{r}
-collect_metrics(eel_full_tune)
+show_best(xgboost_tree_params_tuned, metric = "roc_auc")
 ```
 
 
@@ -136,30 +176,60 @@ collect_metrics(eel_full_tune)
 1.  Create a new specification where you set the learning rate and tree parameters (which you already optimized) and tune the stochastic parameters.
 
 ```{r}
-eel_model_3 <- boost_tree(learn_rate = tune(), trees = tune(), min_n = tune(), tree_depth = tune(), stop_iter = tune(), loss_reduction = tune()) %>%
-  set_engine("xgboost") %>%
-  set_mode("classification")
-
-eel_workflow_3 <- workflow() %>% #create workflow
-  add_model(eel_model_3) %>%
-  add_recipe(eel_recipe)
+# XGBoost model specification
+eel_stochastic_spec <- 
+  parsnip::boost_tree(
+    mode = "classification",
+    trees = 3000, #number of trees contained in the ensemble
+    min_n = select_best(xgboost_tree_params_tuned, metric = "roc_auc")$min_n, #minimum number of data points in a node that is required for node to be split further
+    tree_depth = select_best(xgboost_tree_params_tuned, metric = "roc_auc")$tree_depth, #maximum depth of tree (i.e. number of splits)
+    learn_rate = select_best(eel_cv_tune, metric = "roc_auc")$learn_rate, #the rate at which the bosting algorithm adapts from iteration-to-iteration
+    loss_reduction = select_best(xgboost_tree_params_tuned, metric = "roc_auc")$loss_reduction, #the reduction in the loss function required to split further
+    mtry = tune(), #number predictors randomly sampled at each split
+    sample_size = tune(), #the amount of data exposed to the fitting routine
+    stop_iter = tune()) %>% #the number of iterations without improvement before stopping 
+    set_engine("xgboost")
 ```
 
 
 2.  Set up a tuning grid. Use grid_latin_hypercube() again.
 
 ```{r}
-grid_hypercube <- grid_latin_hypercube(learn_rate(), trees(), min_n(), tree_depth(), stop_iter(), loss_reduction())
-  
-system.time(eel_tune_3 <- eel_workflow_3 %>%
-  tune_grid(resamples = eel_cv, grid = grid_hypercube))
+# grid specification
+xgboost_stochastic_params <- 
+  dials::parameters(finalize(mtry(), select(eel_training, -Angaus)), #mtry values will range from 1 to the number of predictors included in the model
+                    sample_size = sample_prop(c(.4, .9)), #sample between 40% and 90% of observations 
+                    stop_iter()) #The number of iterations without improvement before stopping
+
+xgboost_stochastic_grid <- 
+  dials::grid_latin_hypercube(
+    xgboost_stochastic_params, 
+    size = 50
+  )
+
+#create workflow
+xgboost_stochastic_wf <- 
+  workflows::workflow() %>%
+  add_model(eel_stochastic_spec) %>% 
+  add_recipe(eel_recipe)
+
+set.seed(123)
+
+# hyperparameter tuning
+system.time(
+  xgboost_stochastic_tuned <- tune::tune_grid(
+  object = xgboost_stochastic_wf,
+  resamples = eel_cv,
+  grid = xgboost_stochastic_grid,
+  metrics = yardstick::metric_set(accuracy, roc_auc, pr_auc))
+)
 ```
 
 
 3.  Show the performance of the best models and the estimates for the tree parameter values associated with each.
 
 ```{r}
-collect_metrics(eel_tune_3)
+show_best(xgboost_stochastic_tuned, metric = "roc_auc")
 ```
 
 
@@ -168,47 +238,103 @@ collect_metrics(eel_tune_3)
 1.  How well did your model perform? What types of errors did it make?
 
 ```{r}
-eel_best = show_best(eel_tune_3, n = 1, metric = "roc_auc") #get metrics for best random forest model
-eel_best
+#create the final model using all of the optimal tuned parameter values
 
-eel_final <- finalize_workflow(eel_workflow,
-                              select_best(eel_tune_3, metric = "roc_auc"))
+full_model_spec <- 
+  parsnip::boost_tree(
+    mode = "classification",
+    trees = 3000, #number of trees contained in the ensemble
+    min_n = select_best(xgboost_tree_params_tuned, metric = "roc_auc")$min_n, #minimum number of data points in a node that is required for node to be split further
+    tree_depth = select_best(xgboost_tree_params_tuned, metric = "roc_auc")$tree_depth, #maximum depth of tree (i.e. number of splits)
+    learn_rate = select_best(eel_cv_tune, metric = "roc_auc")$learn_rate, #the rate at which the bosting algorithm adapts from iteration-to-iteration
+    mtry = select_best(xgboost_stochastic_tuned, metric = "roc_auc")$mtry, #number predictors randomly sampled at each split
+    loss_reduction = select_best(xgboost_tree_params_tuned, metric = "roc_auc")$loss_reduction, #the reduction in the loss function required to split further
+    sample_size = select_best(xgboost_stochastic_tuned, metric = "roc_auc")$sample_size, #the amount of data exposed to the fitting routine
+    stop_iter = select_best(xgboost_stochastic_tuned, metric = "roc_auc")$stop_iter) %>% #the number of iterations without improvement before stopping 
+    set_engine("xgboost")
 ```
 
+```{r}
+#final workflow
+final_wf <- workflow() %>%
+  add_recipe(eel_recipe) %>%
+  add_model(full_model_spec)
+
+set.seed(123)
+#pop my spec into a workflow for final fit 
+final_fit <- last_fit(final_wf, eel_split)
+
+final_fit %>% collect_metrics()
+
+test_eel_preds <- final_fit$.predictions[[1]]
+
+#create confusion matrix 
+conf_matrix <- test_eel_preds %>% yardstick::conf_mat(truth=Angaus, estimate=.pred_class) 
+
+autoplot(conf_matrix, type = "heatmap") + 
+  labs(title = "Confusion Matrix for Test Data")
+```
+
+**Explanations**
 
 ## Fit your model the evaluation data and compare performance
 
 1.  Now used your final model to predict on the other dataset (eval.data.csv)
 
 ```{r}
-train_fit_eel = fit(eel_final, eel_training)
-train_fit_eel
+# fit the final model on the evaluation data 
+set.seed(123)
+eels_eval_fit <- fit(final_wf, data = eel_eval_data) 
 
-test_predict_eel = predict(train_fit_eel, eel_eval_data) %>% #get prediction probabilities for test 
-  bind_cols(eel_eval_data) %>%
-  mutate(Angaus_obs = as.factor(Angaus_obs))
+eel_eval_preds <- predict(eels_eval_fit, new_data = eel_eval_data)
+
+eels_eval_set <- bind_cols(eel_eval_data$Angaus, eel_eval_preds) %>%
+  rename(Angaus = ...1)
+
+#make the confusion matrix 
+conf_matrix <- eels_eval_set %>% yardstick::conf_mat(truth=Angaus, estimate=.pred_class) 
+
+autoplot(conf_matrix, type = "heatmap") + 
+  labs(title = "Confusion Matrix for Evaluation Data")
 ```
 
 
 2.  How does your model perform on this data?
 
-```{r}
-accuracy(test_predict_eel, truth = Angaus_obs, estimate = .pred_class) #get accuracy of testing prediction
-```
+**Explinations**
 
 
 3.  How do your results compare to those of Elith et al.?
 
+```{r}
+#Calculating the roc auc so I can compare to the paper 
+
+#obtaining true values and making them numeric 
+true_labels <- as.numeric(eels_eval_set$Angaus) - 1 
+
+#make the predictions numeric as well
+predictions <- as.numeric(eels_eval_set$.pred_class) - 1
+
+#create roc object from pROC package
+roc_obj <- pROC::roc(true_labels, predictions)
+
+#calculate roc auc 
+pROC::auc(roc_obj)
+```
+
+**Explination**
+
 -   Use {vip} to compare variable importance
 
 ```{r}
-train_fit_eel %>%
+eels_eval_fit %>%
   vip::vip(geom = "point") +
   theme_bw()
 ```
 
-**For both my results and the results of Elith et al., SegSumT has the highest variable importance and USNative has the second highest.**
+**From my model, summer air temperature (SegSumT) and distance to coast (DSDist) were the most important predictors. Summer air temperature was also the most important predictor for the model from the paper. In general, sites where Angaus was detected were likely to be warmer and closer to the coast than areas where Angaus was not detected.**
+
 
 -   What do your variable importance results tell you about the distribution of this eel species?
 
-**The variable SegSumT tells us that the Summer air temperature has the biggest effect on Angaus occurence.**
+**The variable SegSumT tells us that the summer air temperature has the biggest effect on Angaus occurence.**
