@@ -198,7 +198,7 @@ eel_stochastic_spec <-
 # grid specification
 xgboost_stochastic_params <- 
   dials::parameters(finalize(mtry(), select(eel_training, -Angaus)), #mtry values will range from 1 to the number of predictors included in the model
-                    sample_size = sample_prop(c(.4, .9)), #sample between 40% and 90% of observations 
+                    sample_size = sample_prop(), 
                     stop_iter()) #The number of iterations without improvement before stopping
 
 xgboost_stochastic_grid <- 
