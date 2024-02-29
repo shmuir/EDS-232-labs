@@ -1,11 +1,11 @@
 ---
 title: "Clustering Lab"
-author: "Mateo Robbins"
+author: "Sam Muir"
 date: "2024-02-29"
 output: html_document
 ---
 
-```{r, echo = FALSE, eval = TRUE}
+```{r, echo = FALSE, eval = TRUE, message=FALSE}
 library(tidyverse) 
 library(cluster) #cluster analysis
 library(factoextra) #cluster visualization
@@ -91,7 +91,7 @@ In-class assignment!
 
 Now it's your turn to partition a dataset.  For this round we'll use data from Roberts et al. 2008 on bio-contaminants in Sydney Australia's Port Jackson Bay.  The data are measurements of metal content in two types of co-occurring algae at 10 sample sites around the bay.
 
-```{r data}
+```{r data, message=FALSE}
 #Read in data
 metals_dat <- readr::read_csv(here::here("week-8/Harbour_metals.csv"))
 
@@ -106,7 +106,6 @@ metals_dat2 <- metals_dat[, 4:8]
 
 ```{r}
 mod1 <- fviz_nbclust(metals_dat2, kmeans, "wss")
-mod1
 
 k3 <- kmeans(metals_dat2, centers = 3, nstart = 25)
 fviz_cluster(k3, geom = "point", data = metals_dat2)
@@ -121,10 +120,10 @@ Do you notice anything different about the spacing between clusters?  Why might 
 Run summary() on your model object.  Does anything stand out?
 
 ```{r}
-summary(mod1)
+mod1
 ```
 
-**Nothing is standing out to me.**
+**Looking at the mdodel, it seems like the elbow is at 3 clusters**
 
 2. Good, now let's move to hierarchical clustering that we saw in lecture. The first step for that is to calculate a distance matrix on the data (using dist()). Euclidean is a good choice for the distance method.
 
@@ -150,11 +149,11 @@ metal_clust <- hclust(dist_euc)
 
 4. Now plot the clustering object. You can use something of the form plot(as.dendrogram()).  Or you can check out the cool visual options here: https://rpubs.com/gaston/dendrograms
 
-```{r}
+```{r, fig.width=10}
 plot(as.dendrogram(metal_clust))
 ```
 
 
 How does the plot look? Do you see any outliers?  How can you tell?  
 
-**The plot looks like a hierarchical structure and there seems to be 3 groups if the branches are cut at a cluster distance of around 75. Though there are potentially outliers on the far left (51-18). These points take the longest to become nested with the rest of the dendrogram. If these are cut from the rest of the dendrogram, we would have two clusters.** 
+**The plot looks like a hierarchical structure and there seems to be 3 groups if the branches are cut at a cluster distance of around 75. Though there are potentially outliers on the far left (51-18) and seem to be the most different. These points take the longest to become nested with the rest of the dendrogram. If these are cut from the rest of the dendrogram, we would have two clusters.** 
