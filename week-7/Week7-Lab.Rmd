@@ -1,7 +1,7 @@
 ---
 title: "Lab6"
 author: "Sam Muir"
-date: "2023-03-01"
+date: "2023-03-03"
 output: html_document
 ---
 
@@ -14,8 +14,12 @@ This week's lab follows a project modeling the eel species Anguilla australis de
 Grab the training data sets (eel.model.data.csv, eel.eval.data.csv) from github here:
 https://github.com/MaRo406/eds-232-machine-learning/blob/main/data 
 
-```{r}
+```{r, echo=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+
+```{r}
 library(tidyverse)
 library(skimr)
 library(tidymodels)
@@ -25,10 +29,10 @@ library(rsample)
 ```
 
 ```{r}
-eel_model_data <- read_csv("week-7/eel.model.data.csv") %>%
+eel_model_data <- read_csv(here::here("week-7/eel.model.data.csv")) %>%
   mutate(Angaus = as.factor(Angaus)) %>%
   select(-Site)
-eel_eval_data <- read_csv("week-7/eel.eval.data.csv") %>%
+eel_eval_data <- read_csv(here::here("week-7/eel.eval.data.csv")) %>%
   rename(Angaus = Angaus_obs) %>%
   mutate(Angaus = as.factor(Angaus))
 ```
@@ -39,6 +43,7 @@ Split the model data (eel.model.data.csv) into a training and test set, stratifi
 
 ```{r}
 set.seed(222)
+# split data
 eel_split <- initial_split(eel_model_data, strata = Angaus)
 eel_training <- training(eel_split)
 eel_testing <- testing(eel_split)
@@ -55,9 +60,9 @@ eel_cv <- eel_training %>%
 Create a recipe to prepare your data for the XGBoost model
 
 ```{r}
-eel_recipe <- recipe(Angaus ~ ., data = eel_training) %>% #create model recipe
-  step_dummy(all_nominal_predictors(), one_hot = TRUE) %>% #create dummy variables from all factors
-  step_normalize(all_numeric_predictors()) #normalize all numeric predictors
+eel_recipe <- recipe(Angaus ~ ., data = eel_training) %>%
+  step_dummy(all_nominal_predictors(), one_hot = TRUE) %>% # dummy variables from all factors
+  step_normalize(all_numeric_predictors()) # normalize all numeric predictors
 ```
 
 
@@ -72,7 +77,7 @@ Following the XGBoost tuning strategy outlined in lecture, first we conduct tuni
 -   Only specify one parameter to tune()
 
 ```{r}
-eel_spec_lr_tune <- boost_tree(trees = 3000, learn_rate = tune()) %>%
+eel_spec_lr_tune <- boost_tree(trees = 3000, learn_rate = tune()) %>% # set trees; standard value 
   set_engine("xgboost") %>%
   set_mode("classification")
 
@@ -94,10 +99,10 @@ lr_grid <- expand.grid(learn_rate = seq(0.0001, 0.3, length.out = 30))
 doParallel::registerDoParallel() 
 
 # tune lr
-system.time(
+system.time( # timer
   eel_cv_tune <- eel_lr_tune_wf %>%
     tune_grid(resamples = eel_cv, 
-              grid = lr_grid,
+              grid = lr_grid, # specify grid
               metrics = metric_set(accuracy, roc_auc, pr_auc))
   )
 ```
@@ -123,7 +128,7 @@ eel_tree_param_spec <-
     min_n = tune(),
     tree_depth = tune(),
     loss_reduction = tune(),
-    learn_rate = select_best(eel_cv_tune, metric = "roc_auc")$learn_rate) %>%
+    learn_rate = select_best(eel_cv_tune, metric = "roc_auc")$learn_rate) %>% # select optimized learn rate
     set_engine("xgboost")
 ```
 
@@ -142,7 +147,7 @@ xgboost_tree_params <-
 xgboost_tree_params_grid <- 
   dials::grid_latin_hypercube( 
     xgboost_tree_params,  
-    size = 50 #number of different parameter combinations 
+    size = 50 #number of parameter value combos 
   )
 
 xgboost_tree_params_wf <- 
@@ -150,9 +155,7 @@ xgboost_tree_params_wf <-
   add_model(eel_tree_param_spec) %>% 
   add_recipe(eel_recipe)
 
-set.seed(123)
-
-# hyperparameter tuning
+# tune hyperparameters
 system.time(
   xgboost_tree_params_tuned <- tune::tune_grid(
   object = xgboost_tree_params_wf,
@@ -180,14 +183,14 @@ show_best(xgboost_tree_params_tuned, metric = "roc_auc")
 eel_stochastic_spec <- 
   parsnip::boost_tree(
     mode = "classification",
-    trees = 3000, #number of trees contained in the ensemble
-    min_n = select_best(xgboost_tree_params_tuned, metric = "roc_auc")$min_n, #minimum number of data points in a node that is required for node to be split further
-    tree_depth = select_best(xgboost_tree_params_tuned, metric = "roc_auc")$tree_depth, #maximum depth of tree (i.e. number of splits)
-    learn_rate = select_best(eel_cv_tune, metric = "roc_auc")$learn_rate, #the rate at which the bosting algorithm adapts from iteration-to-iteration
-    loss_reduction = select_best(xgboost_tree_params_tuned, metric = "roc_auc")$loss_reduction, #the reduction in the loss function required to split further
-    mtry = tune(), #number predictors randomly sampled at each split
-    sample_size = tune(), #the amount of data exposed to the fitting routine
-    stop_iter = tune()) %>% #the number of iterations without improvement before stopping 
+    trees = 3000,
+    min_n = select_best(xgboost_tree_params_tuned, metric = "roc_auc")$min_n, # min # of points in a node that is required for node to be split further
+    tree_depth = select_best(xgboost_tree_params_tuned, metric = "roc_auc")$tree_depth, # max depth of tree; number of splits
+    learn_rate = select_best(eel_cv_tune, metric = "roc_auc")$learn_rate, # rate at which the boosting algorithm adapts from iteration-to-iteration
+    loss_reduction = select_best(xgboost_tree_params_tuned, metric = "roc_auc")$loss_reduction, # the reduction in the loss function required to split further
+    mtry = tune(), # number predictors sampled at each split
+    sample_size = tune(), # amount of data exposed to the fitting routine
+    stop_iter = tune()) %>% # number of iterations without improvement before stopping 
     set_engine("xgboost")
 ```
 
@@ -196,24 +199,20 @@ eel_stochastic_spec <-
 
 ```{r}
 # grid specification
-xgboost_stochastic_params <- 
-  dials::parameters(finalize(mtry(), select(eel_training, -Angaus)), #mtry values will range from 1 to the number of predictors included in the model
-                    sample_size = sample_prop(), 
-                    stop_iter()) #The number of iterations without improvement before stopping
+xgboost_stochastic_params <- dials::parameters(
+  finalize(mtry(), select(eel_training, -Angaus)),
+  sample_size = sample_prop(),
+  stop_iter())
 
-xgboost_stochastic_grid <- 
-  dials::grid_latin_hypercube(
-    xgboost_stochastic_params, 
-    size = 50
-  )
+xgboost_stochastic_grid <- dials::grid_latin_hypercube(
+  xgboost_stochastic_params, 
+  size = 50)
 
 #create workflow
 xgboost_stochastic_wf <- 
   workflows::workflow() %>%
   add_model(eel_stochastic_spec) %>% 
   add_recipe(eel_recipe)
-
-set.seed(123)
 
 # hyperparameter tuning
 system.time(
@@ -238,51 +237,52 @@ show_best(xgboost_stochastic_tuned, metric = "roc_auc")
 1.  How well did your model perform? What types of errors did it make?
 
 ```{r}
-#create the final model using all of the optimal tuned parameter values
-
+# creating final model
 full_model_spec <- 
   parsnip::boost_tree(
     mode = "classification",
-    trees = 3000, #number of trees contained in the ensemble
-    min_n = select_best(xgboost_tree_params_tuned, metric = "roc_auc")$min_n, #minimum number of data points in a node that is required for node to be split further
-    tree_depth = select_best(xgboost_tree_params_tuned, metric = "roc_auc")$tree_depth, #maximum depth of tree (i.e. number of splits)
-    learn_rate = select_best(eel_cv_tune, metric = "roc_auc")$learn_rate, #the rate at which the bosting algorithm adapts from iteration-to-iteration
-    mtry = select_best(xgboost_stochastic_tuned, metric = "roc_auc")$mtry, #number predictors randomly sampled at each split
-    loss_reduction = select_best(xgboost_tree_params_tuned, metric = "roc_auc")$loss_reduction, #the reduction in the loss function required to split further
-    sample_size = select_best(xgboost_stochastic_tuned, metric = "roc_auc")$sample_size, #the amount of data exposed to the fitting routine
-    stop_iter = select_best(xgboost_stochastic_tuned, metric = "roc_auc")$stop_iter) %>% #the number of iterations without improvement before stopping 
+    trees = 3000,
+    min_n = select_best(xgboost_tree_params_tuned, metric = "roc_auc")$min_n,
+    tree_depth = select_best(xgboost_tree_params_tuned, metric = "roc_auc")$tree_depth,
+    learn_rate = select_best(eel_cv_tune, metric = "roc_auc")$learn_rate,
+    mtry = select_best(xgboost_stochastic_tuned, metric = "roc_auc")$mtry,
+    loss_reduction = select_best(xgboost_tree_params_tuned, metric = "roc_auc")$loss_reduction,
+    sample_size = select_best(xgboost_stochastic_tuned, metric = "roc_auc")$sample_size,
+    stop_iter = select_best(xgboost_stochastic_tuned, metric = "roc_auc")$stop_iter) %>%
     set_engine("xgboost")
 ```
 
 ```{r}
-#final workflow
+# final workflow
 final_wf <- workflow() %>%
   add_recipe(eel_recipe) %>%
   add_model(full_model_spec)
 
-set.seed(123)
-#pop my spec into a workflow for final fit 
+set.seed(457)
+
+# last fit
 final_fit <- last_fit(final_wf, eel_split)
 
-final_fit %>% collect_metrics()
+#final_fit %>% collect_metrics()
 
 test_eel_preds <- final_fit$.predictions[[1]]
 
-#create confusion matrix 
+# set up confusion matrix 
 conf_matrix <- test_eel_preds %>% yardstick::conf_mat(truth=Angaus, estimate=.pred_class) 
 
+# plot conf mat.
 autoplot(conf_matrix, type = "heatmap") + 
   labs(title = "Confusion Matrix for Test Data")
 ```
 
-**Explanations**
+**Overall the model did pretty well. It had a ~83% accuracy. The majority of the errors were false negatives (predicted not present when it actually was), though there were some false positives as well.**
 
 ## Fit your model the evaluation data and compare performance
 
 1.  Now used your final model to predict on the other dataset (eval.data.csv)
 
 ```{r}
-# fit the final model on the evaluation data 
+# fit the final model
 set.seed(123)
 eels_eval_fit <- fit(final_wf, data = eel_eval_data) 
 
@@ -290,8 +290,13 @@ eel_eval_preds <- predict(eels_eval_fit, new_data = eel_eval_data)
 
 eels_eval_set <- bind_cols(eel_eval_data$Angaus, eel_eval_preds) %>%
   rename(Angaus = ...1)
+```
 
-#make the confusion matrix 
+
+2.  How does your model perform on this data?
+
+```{r}
+# confusion matrix 
 conf_matrix <- eels_eval_set %>% yardstick::conf_mat(truth=Angaus, estimate=.pred_class) 
 
 autoplot(conf_matrix, type = "heatmap") + 
@@ -299,30 +304,28 @@ autoplot(conf_matrix, type = "heatmap") +
 ```
 
 
-2.  How does your model perform on this data?
-
-**Explinations**
+**The model also performed okay on this data, with a ~88% accuracy. Again, the majority of the errors were false negatives with 75% of the errors being this kind.**
 
 
 3.  How do your results compare to those of Elith et al.?
 
 ```{r}
-#Calculating the roc auc so I can compare to the paper 
+# getting roc auc 
 
-#obtaining true values and making them numeric 
-true_labels <- as.numeric(eels_eval_set$Angaus) - 1 
+# get true values; needs to be numeric
+true <- as.numeric(eels_eval_set$Angaus) - 1 # minus 1 bc values are 1 & 2 when set to numeric
 
-#make the predictions numeric as well
+# get pred values
 predictions <- as.numeric(eels_eval_set$.pred_class) - 1
 
-#create roc object from pROC package
-roc_obj <- pROC::roc(true_labels, predictions)
+# get roc
+roc_obj <- pROC::roc(true, predictions)
 
 #calculate roc auc 
 pROC::auc(roc_obj)
 ```
 
-**Explination**
+**The roc auc I calculated was worse than the one that the paper authors found (0.858). By adjusting the grids, I could also possibly improve the auc.**
 
 -   Use {vip} to compare variable importance
 
@@ -332,9 +335,8 @@ eels_eval_fit %>%
   theme_bw()
 ```
 
-**From my model, summer air temperature (SegSumT) and distance to coast (DSDist) were the most important predictors. Summer air temperature was also the most important predictor for the model from the paper. In general, sites where Angaus was detected were likely to be warmer and closer to the coast than areas where Angaus was not detected.**
-
+**From my model, summer air temperature (SegSumT), distance to coast (DSDist), and average slope in the upstream catchment (USSlope) were the most important predictors. Summer air temperature was also the most important predictor for the model from the paper.**
 
 -   What do your variable importance results tell you about the distribution of this eel species?
 
-**The variable SegSumT tells us that the summer air temperature has the biggest effect on Angaus occurence.**
+**These variable importance results tell us that the summer air temperature has the biggest effect on Angaus occurrence, that distance to coast has the second highest influence, and that average slope in the upstream catchment has the third highest influence. In general, sites where the Angaus eel was detected were likely to be warmer, closer to the coast, and have a milder slope in the upstream catchment .**
