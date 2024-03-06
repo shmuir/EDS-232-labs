@@ -331,11 +331,11 @@ pROC::auc(roc_obj)
 
 ```{r}
 eels_eval_fit %>%
-  vip::vip(geom = "point") +
+  vip::vip(geom = "point", num_features = 12) +
   theme_bw()
 ```
 
-**From my model, summer air temperature (SegSumT), distance to coast (DSDist), and average slope in the upstream catchment (USSlope) were the most important predictors. Summer air temperature was also the most important predictor for the model from the paper.**
+**From my model, summer air temperature (`SegSumT`), distance to coast (`DSDist`), and average slope in the upstream catchment (`USSlope`) were the most important predictors. Summer air temperature was also the most important predictor for the model from the paper.**
 
 -   What do your variable importance results tell you about the distribution of this eel species?
 
