@@ -28,9 +28,17 @@ Explore the data.
 ```{r}
 forest <- read_csv("week-9/covtype_sample.csv") %>%
   janitor::clean_names() %>%
-  mutate(cover_type = as.factor(cover_type))
+  mutate(cover_type = as.factor(cover_type)) %>%
+  mutate(across(6:54, as.factor)) %>%
+  select(-soil_type_15, -soil_type_37, -soil_type_38, -soil_type_39, -soil_type_40) # only have value 
 
 skimr::skim(forest)
+```
+
+```{r}
+ggplot(forest, aes(x = cover_type)) +
+  geom_histogram(stat = "count") +
+  theme_bw()
 ```
 
 -   What kinds of features are we working with?
@@ -39,16 +47,30 @@ skimr::skim(forest)
 
 -   Does anything stand out that will affect you modeling choices?
 
-**Some of the continuous variables are not normally distributed.**
+**Some of the continuous variables are not normally distributed. There are also both continuous and categorical variables.**
 
 Hint: Pay special attention to the distribution of the outcome variable across the classes.
 
 2.  Create the recipe and carry out any necessary preprocessing. Can you use the same recipe for both models?
 
+3.  Create the folds for cross-validation.
+
+4.  Tune the models. Choose appropriate parameters and grids. If the computational costs of tuning given your strategy are prohibitive, how might you work around this?
+
+5.  Conduct final predictions for both models and compare their prediction performances and computation costs from part 4.
+
 ```{r}
-svm_rec <- recipe(cover_type~., data = forest) %>%
-  step_center(all_predictors()) %>%
-  step_scale(all_predictors())
+# Split the data into training and testing
+split <- initial_split(forest, 0.7, strata = cover_type)
+forest_training <- training(split)
+forest_testing <- testing(split)
+
+# create recipe
+svm_rec <- recipe(cover_type~., data = forest_training) %>%
+  step_center(all_numeric_predictors()) %>%
+  step_scale(all_numeric_predictors()) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors())
 
 svm_linear_spec <- svm_poly(degree = 1,
                             cost = tune()) %>% # cost parameter: width of margin around hyper plane
@@ -59,35 +81,27 @@ svm_linear_wf <- workflow() %>%
   add_model(svm_linear_spec %>% set_args(cost_tune())) %>% 
   add_formula(cover_type~.)
 svm_linear_wf
-```
 
-3.  Create the folds for cross-validation.
-
-```{r}
 set.seed(258)
-forest_fold <- vfold_cv(forest, strata = cover_type)
-```
+forest_fold <- vfold_cv(forest_training, strata = cover_type)
 
+doParallel::registerDoParallel(cores = 4) 
 
-4.  Tune the models. Choose appropriate parameters and grids. If the computational costs of tuning given your strategy are prohibitive, how might you work around this?
+param_grid <- grid_regular(cost(), levels = 5)
 
-```{r}
-param_grid <- grid_regular(cost(), levels = 10)
 # tune grid
+system.time(
 tune_res <- tune_grid(
   svm_linear_wf,
   resamples = forest_fold,
   grid = param_grid
-)
+))
+#      user    system   elapsed 
+# 19934.777  1483.132  6402.373 
+
+write_rds(tune_res, "week-9/svm_tune.rda")
 
 autoplot(tune_res)
-```
-
-
-5.  Conduct final predictions for both models and compare their prediction performances and computation costs from part 4.
-
-```{r}
-
 ```
 
 
