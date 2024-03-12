@@ -100,8 +100,47 @@ tune_res <- tune_grid(
 # 19934.777  1483.132  6402.373 
 
 write_rds(tune_res, "week-9/svm_tune.rda")
+tune_res <- read_rds("week-9/svm_tune.rda")
 
 autoplot(tune_res)
+
+## finalize 
+best_cost <- select_best(tune_res, metric = "accuracy")
+best_cost
+
+svm_linear_final <- finalize_workflow(svm_linear_wf, best_cost)
+
+svm_linear_fit <- svm_linear_final %>% fit(forest_training)
+write_rds(svm_linear_fit, "week-9/svm_linear_fit.rda")
+svm_linear_fit <- read_rds("week-9/svm_linear_fit.rda")
+svm_linear_fit
+
+# augment 
+augment(svm_linear_fit, new_data = forest_testing) %>%
+  conf_mat(truth = y, estimate = .pred_class)
+
+
+#--------------------
+svm_rbf_spec <- svm_rbf() %>% # cost parameter: width of margin around hyper plane
+  set_mode("classification") %>%
+  set_engine("kernlab")
+
+svm_rbf_fit <- svm_rbf_spec %>%
+  fit(cover_type~., data = forest_training)
+
+svm_rbf_fit
+
+#Examine model performance via confusion matrix
+augment(svm_rbf_fit, new_data = forest_testing) %>%
+  conf_mat(truth = cover_type, estimate = .pred_class)
+
+#We can examine our model's performance using ROC and AUC
+augment(svm_rbf_fit, new_data = forest_testing) %>%
+  roc_curve(truth = cover_type, .pred_1) %>%
+  autoplot()
+
+augment(svm_rbf_fit, new_data = forest_testing) %>%
+  roc_auc(truth = cover_type, .pred_1)
 ```
 
 
