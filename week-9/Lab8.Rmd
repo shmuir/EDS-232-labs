@@ -30,8 +30,7 @@ forest <- read_csv(here::here("week-9", "covtype_sample.csv")) %>%
   janitor::clean_names() %>%
   mutate(cover_type = as.factor(cover_type)) %>%
   mutate(across(6:54, as.factor)) %>%
-  select(-soil_type_15, -soil_type_37, -soil_type_38, -soil_type_39, -soil_type_40) # only have value 
-
+  select(-soil_type_15) # only have value 
 #skimr::skim(forest)
 ```
 
@@ -62,7 +61,6 @@ Hint: Pay special attention to the distribution of the outcome variable across t
 ## SVM Poly
 
 ### Create the recipe and carry out any necessary preprocessing.
-
 ```{r}
 # Split the data into training and testing
 split <- initial_split(forest, 0.7, strata = cover_type)
@@ -89,7 +87,6 @@ svm_linear_wf <- workflow() %>%
 ```
 
 ### Create the folds for cross-validation.
-
 ```{r}
 set.seed(258)
 forest_fold <- vfold_cv(forest_training, strata = cover_type, v = 5)
@@ -111,7 +108,7 @@ tune_res <- tune_grid(
   grid = param_grid
 ))
 #      user    system   elapsed 
-# 9934.777  483.132  402.373 
+# 9934.777  483.132  902.373 
 ```
 
 ```{r, echo=FALSE}
@@ -121,7 +118,8 @@ tune_res <- read_rds(here::here("week-9", "svm_tune.rda"))
 
 ### Conduct final predictions
 ```{r}
-autoplot(tune_res)
+autoplot(tune_res) +
+  theme_bw()
 
 ## finalize 
 best_cost <- select_best(tune_res, metric = "accuracy")
@@ -224,6 +222,7 @@ rf_workflow <- workflow() %>%
   add_recipe(rf_recipe)
 ```
 
+### Tune the models. Choose appropriate parameters and grids.
 ```{r, eval=FALSE}
 # parameter tuning ----
 system.time(
@@ -238,6 +237,7 @@ system.time(
 rf_cv_tune <- read_rds(here::here("week-9/rf_cv_tune.rda"))
 ```
 
+### Conduct final predictions
 ```{r}
 #get metrics from tuning cv to pick best model ----
 #collect_metrics(rf_cv_tune) 
@@ -266,7 +266,7 @@ test_predict_rf <- predict(train_fit_rf, second_testing, type = "prob") %>% #get
 
 # roc auc curve
 roc_curve(test_predict_rf, cover_type, .pred_1, .pred_2, .pred_3, .pred_5, .pred_6, .pred_7) %>%
-  autoplot()
+  autoplot() 
 
 test_predict_rf %>%
   roc_auc(cover_type, .pred_1, .pred_2, .pred_3, .pred_5, .pred_6, .pred_7)
