@@ -29,8 +29,8 @@ Explore the data.
 forest <- read_csv(here::here("week-9", "covtype_sample.csv")) %>%
   janitor::clean_names() %>%
   mutate(cover_type = as.factor(cover_type)) %>%
-  mutate(across(6:54, as.factor)) %>%
-  select(-soil_type_15) # only have value 
+  mutate(across(6:55, as.factor)) %>%
+  select(-soil_type_15) # only have value
 #skimr::skim(forest)
 ```
 
@@ -58,9 +58,7 @@ Hint: Pay special attention to the distribution of the outcome variable across t
 
 5.  Conduct final predictions for both models and compare their prediction performances and computation costs from part 4.
 
-## SVM Poly
-
-### Create the recipe and carry out any necessary preprocessing.
+### Create the recipe and Carry out any necessary preprocessing.
 ```{r}
 # Split the data into training and testing
 split <- initial_split(forest, 0.7, strata = cover_type)
@@ -69,11 +67,15 @@ forest_testing <- testing(split)
 
 # create recipe
 svm_rec <- recipe(cover_type~., data = forest_training) %>%
+  step_zv(all_predictors()) %>%
   step_center(all_numeric_predictors()) %>%
-  step_scale(all_numeric_predictors()) %>%
-  step_dummy(all_nominal_predictors()) %>%
-  step_normalize(all_numeric_predictors())
+  step_scale(all_numeric_predictors())
+```
 
+
+## SVM Poly
+
+```{r}
 svm_linear_spec <- svm_poly(degree = 1,
                             cost = tune()) %>% # cost parameter: width of margin around hyper plane
   set_mode("classification") %>%
@@ -89,14 +91,14 @@ svm_linear_wf <- workflow() %>%
 ### Create the folds for cross-validation.
 ```{r}
 set.seed(258)
-forest_fold <- vfold_cv(forest_training, strata = cover_type, v = 5)
+forest_fold <- vfold_cv(forest_training, strata = cover_type, v = 2)
 ```
 
 ### Tune the models. Choose appropriate parameters and grids.
 ```{r}
 doParallel::registerDoParallel(cores = 4) # set up parallel processing for computation efficiency
 
-param_grid <- grid_regular(cost(), levels = 5) # grid; 5 for run-time
+param_grid <- grid_regular(cost(), levels = 2) # grid; for run-time
 ```
 
 ```{r, eval=FALSE}
@@ -107,8 +109,8 @@ tune_res <- tune_grid(
   resamples = forest_fold,
   grid = param_grid
 ))
-#      user    system   elapsed 
-# 9934.777  483.132  902.373 
+#    user  system elapsed 
+# 421.116  14.748 450.675 
 ```
 
 ```{r, echo=FALSE}
@@ -118,8 +120,8 @@ tune_res <- read_rds(here::here("week-9", "svm_tune.rda"))
 
 ### Conduct final predictions
 ```{r}
-autoplot(tune_res) +
-  theme_bw()
+# autoplot(tune_res) +
+#   theme_bw()
 
 ## finalize 
 best_cost <- select_best(tune_res, metric = "accuracy")
@@ -147,9 +149,9 @@ svm_linear_augment %>%
   conf_mat(truth = cover_type, estimate = .pred_class) %>%
   autoplot(type = "heatmap")
 
-svm_linear_augment %>%
-  roc_curve(truth = cover_type, .pred_1, .pred_2, .pred_3, .pred_4, .pred_5, .pred_6, .pred_7) %>%
-  autoplot()
+# svm_linear_augment %>%
+#   roc_curve(truth = cover_type, .pred_1, .pred_2, .pred_3, .pred_4, .pred_5, .pred_6, .pred_7) %>%
+#   autoplot()
 
 svm_linear_augment %>%
   roc_auc(truth = cover_type, .pred_1, .pred_2, .pred_3, .pred_4, .pred_5, .pred_6, .pred_7)
@@ -162,6 +164,11 @@ svm_linear_augment %>%
 svm_rbf_spec <- svm_rbf() %>%
   set_mode("classification") %>%
   set_engine("kernlab")
+
+svm_rbf_wf <- workflow() %>% 
+  add_model(svm_rbf_spec %>% 
+              set_args(cost_tune())) %>% 
+  add_formula(cover_type~.)
 ```
 
 ```{r, eval=FALSE}
@@ -187,30 +194,18 @@ svm_rbf_augment %>%
   autoplot(type = "heatmap")
 
 #We can examine our model's performance using ROC and AUC
-svm_rbf_augment %>%
-  roc_curve(., truth = cover_type, .pred_1, .pred_2, .pred_3, .pred_4, .pred_5, .pred_6, .pred_7) %>%
-  autoplot()
+# svm_rbf_augment %>%
+#   roc_curve(., truth = cover_type, .pred_1, .pred_2, .pred_3, .pred_4, .pred_5, .pred_6, .pred_7) %>%
+#   autoplot()
 
 svm_rbf_augment %>%
   roc_auc(truth = cover_type, .pred_1, .pred_2, .pred_3, .pred_4, .pred_5, .pred_6, .pred_7)
 ```
 
 ## Random Forest
-```{r}
-# splitting into a much smaller training set for computational time
-second_split <- initial_split(forest_training, 0.05)
-second_training <- training(second_split)
-second_testing <- testing(second_split)
-```
 
 ### Create the recipe and carry out any necessary preprocessing.
 ```{r}
-# create a recipe
-rf_recipe <- recipe(cover_type ~ ., data = second_training) %>%
-  step_dummy(all_nominal_predictors()) %>%
-  step_normalize(all_numeric_predictors()) %>% #normalize numeric to make sure scale is okay
-  prep()
-
 rf_model <- rand_forest(mtry = tune(),
                   trees = tune()) %>%
   set_engine("ranger") %>%
@@ -219,24 +214,15 @@ rf_model <- rand_forest(mtry = tune(),
 # workflow ----
 rf_workflow <- workflow() %>%
   add_model(rf_model) %>%
-  add_recipe(rf_recipe)
-
-forest_fold <- vfold_cv(second_training, strata = cover_type, v = 2)
+  add_recipe(svm_rec) # same recipe as svm
 ```
 
 ### Tune the models. Choose appropriate parameters and grids.
-```{r, eval=FALSE}
+```{r, eval=TRUE}
 # parameter tuning ----
 system.time(
   rf_cv_tune <- rf_workflow %>%
-  tune_grid(resamples = forest_fold, grid = 3)) #use cross validation to tune mtry and trees parameters
-#    user  system elapsed 
-# 528.482   7.170 542.422 
-```
-
-```{r, echo=FALSE}
-#write_rds(rf_cv_tune, "week-9/rf_cv_tune.rda")
-rf_cv_tune <- read_rds(here::here("week-9/rf_cv_tune.rda"))
+  tune_grid(resamples = forest_fold, grid = 2)) #use cross validation to tune mtry and trees parameters
 ```
 
 ### Conduct final predictions
@@ -256,29 +242,32 @@ rf_final <- finalize_workflow(rf_workflow,
                               select_best(rf_cv_tune, metric = "roc_auc"))
 
 # model fitting ----
-train_fit_rf <- fit(rf_final, second_training) #fit the model to the training set
+train_fit_rf <- fit(rf_final, forest_training) #fit the model to the training set
 #train_fit_rf
 
 # prediction probabilities ----
-test_predict_rf <- predict(train_fit_rf, second_testing, type = "prob") %>% #get testing prediction
-  bind_cols(second_testing) %>%  #bind to testing column
-  filter(cover_type != 4) %>%
+test_predict_rf <- predict(train_fit_rf, forest_testing) %>% #get testing prediction
+  bind_cols(forest_testing) %>%  #bind to testing column
   mutate(cover_type = as.numeric(cover_type),
          cover_type = as.factor(cover_type))
 
 # roc auc curve
-roc_curve(test_predict_rf, cover_type, .pred_1, .pred_2, .pred_3, .pred_5, .pred_6, .pred_7) %>%
-  autoplot() 
+# roc_curve(test_predict_rf, cover_type, .pred_class) %>%
+#   autoplot() 
 
 test_predict_rf %>%
-  roc_auc(cover_type, .pred_1, .pred_2, .pred_3, .pred_5, .pred_6, .pred_7)
+  conf_mat(truth = cover_type, estimate = .pred_class) %>%
+  autoplot(type = 'heatmap')
+
+test_predict_rf %>%
+  accuracy(cover_type, estimate = .pred_class)
 ```
 
 -   Which type of model do you think is better for this task?
 
-**I think that for this task the RBF SVM is better for this task, especially in terms of computational efficiency. It took the Poly SVM a while to run with all of the training data, but the random forest also took a while to run with only 5% of the training data. In comparison, the RBF SVM took a fraction of the tine with all of the training data. The roc_auc for the models were comparable, though the random forest roc_auc was a bit higher than the RBF SVM, which was slightly higher than the Poly SVM. In the grand scheme of machine learning I know this isn't the largest data set, but for our purpose, I would probably use the RBF SVM to balance computational efficiency and performance.**
+**I think that for this task the random forest is better, especially in terms of computational efficiency. It took the SVM a while to run with all of the training data, but the random forest was much faster. The accuracy for the random forest was very similar to the SVM, so in terms of balancing efficiency and accuracy, I think the random forest would be the best.**
 
 -   Why do you speculate this is the case?
 
-**I think that the random forest had better performance since it is better for multi-class classification where SVM is better for two-class. For the RBF SVM, I did not specify a grid or folds, so this reduces computation time, but also reduces model performance.**
+**I think that the random forest was more computationally efficient since it is better for multi-class classification where SVM is better for two-class. There is also a clear imbalance in cover type, as shown by the histograms, and random forest can work through those imbalances better than SVM.**
 
